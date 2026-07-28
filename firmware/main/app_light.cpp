@@ -315,7 +315,13 @@ esp_err_t app_light_init(void)
      * cannot click during boot. */
     gpio_reset_pin(RELAY_GPIO);
     relay_write(false);
+#if CONFIG_APP_RELAY_OPEN_DRAIN
+    /* Open drain: the pin only pulls low, an external 10k pull-up to +5 V provides
+     * the high level (wiring without the level shifter). */
+    gpio_set_direction(RELAY_GPIO, GPIO_MODE_OUTPUT_OD);
+#else
     gpio_set_direction(RELAY_GPIO, GPIO_MODE_OUTPUT);
+#endif
     relay_write(false);
 
 #if CONFIG_APP_LED_GPIO >= 0
@@ -350,7 +356,12 @@ esp_err_t app_light_init(void)
 #else
     const char *polarity = "active high";
 #endif
-    ESP_LOGI(TAG, "relay on GPIO%d (%s), led GPIO%d, button GPIO%d",
-             CONFIG_APP_RELAY_GPIO, polarity, CONFIG_APP_LED_GPIO, CONFIG_APP_BUTTON_GPIO);
+#if CONFIG_APP_RELAY_OPEN_DRAIN
+    const char *drive = "open drain";
+#else
+    const char *drive = "push-pull";
+#endif
+    ESP_LOGI(TAG, "relay on GPIO%d (%s, %s), led GPIO%d, button GPIO%d",
+             CONFIG_APP_RELAY_GPIO, polarity, drive, CONFIG_APP_LED_GPIO, CONFIG_APP_BUTTON_GPIO);
     return ESP_OK;
 }

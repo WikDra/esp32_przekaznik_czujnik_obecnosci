@@ -41,12 +41,32 @@ Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3 na COM5, sieć `192.168.8.12
 
 **Niezweryfikowane** (wymaga podłączonego sprzętu / kontrolera Matter):
 
-- faktyczne przełączanie przekaźnika i poziomy logiczne przez konwerter,
+- faktyczne przełączanie przekaźnika i poziomy logiczne (konwerter albo wariant bez niego),
 - komunikacja UART z LD2420 (odczyt wersji FW, energii bramek, zapis progów),
-- commissioning Matter i synchronizacja OnOff apka ↔ panel. `chip-tool` z WSL **nie
-  zadziała**: host build w `~/esp/esp-matter-1.4.2/.../out/host/chip-tool` jest bez IPv4
-  (`Unsupported address: 192.168.8.120`), a WSL2 jest za NAT-em (brak mDNS/IPv6 do LAN).
-  Parować telefonem (Apple/Google Home) albo Home Assistantem w tej samej sieci.
+- commissioning Matter i synchronizacja OnOff apka ↔ panel.
+
+### Matter — stan na 2026-07-28 (wstrzymane przez właściciela)
+
+Parowanie odłożone; właściciel chce najpierw uruchomić żarówkę + czujnik + panel.
+Ustalenia, żeby nie badać tego dwa razy:
+
+- `chip-tool` z WSL **nie zadziała**: host build w
+  `~/esp/esp-matter-1.4.2/.../out/host/chip-tool` jest bez IPv4
+  (`Unsupported address: 192.168.8.120`), a WSL2 siedzi za NAT-em (brak mDNS/IPv6 do LAN).
+- **Google Home wymaga huba Matter również dla urządzeń po Wi-Fi** (dokumentacja Google,
+  „What you need”: *A Matter-enabled hub for Google Home*; border router Thread jest
+  dopisany dodatkowo tylko dla Thread). Trzeba też **IPv6 na routerze**.
+- Devkit ESP32-H2 z `D:\wysypisko\esp32c6h2\matter_h2\sensors` używał **tego samego**
+  `VID 0xFFF1 / PID 0x8000`, więc Google Home dopasowywał nową płytkę do starej
+  integracji (opisanej jako Thread) i szukał sieci Thread. Dlatego ten projekt ma teraz
+  **własny PID `0x8010`** (`CONFIG_DEVICE_PRODUCT_ID` w `firmware/sdkconfig.local`).
+  W Google Home Developer Console integrację trzeba zarejestrować jako
+  VID `0xFFF1` + PID `0x8010`, device type *Light*.
+- Aktualne kody: QR `MT:SAGA442C00KA0648G00`, kod ręczny `34970112332`, discriminator 3840.
+  Po zmianie PID **QR się zmienia**, kod ręczny nie (nie koduje VID/PID).
+- Najprostsza droga do przetestowania Mattera w tym domu: **Home Assistant** + dodatek
+  *Matter Server* (właściciel ma HA, nie ma potwierdzonego huba Google) — nie wymaga
+  osobnego sprzętu i paruje po IP w tej samej sieci.
 
 **Uwaga o RAM:** przy aktywnym BLE (przed sparowaniem) `free_heap` ≈ 24 kB. To ciasno.
 Po commissioningu BLE jest zwalniane (`CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=y`,
@@ -106,6 +126,14 @@ w stanie wysokim, czyli przekaźnik jest rozwarty (żarówka zgaszona).
 
 Jeśli po testach okaże się, że dany egzemplarz modułu poprawnie wyłącza się przy 3,3 V,
 konwerter można pominąć — ale to trzeba **zmierzyć**, nie założyć.
+
+**Warianty bez konwertera** (opisane w [`README.md`](README.md) §2.3a):
+
+- A: `GPIO10` wprost na `IN`, firmware bez zmian (`CONFIG_APP_RELAY_OPEN_DRAIN=n`) —
+  działa tylko wtedy, gdy moduł faktycznie odpada przy 3,3 V,
+- B: `GPIO10` jako **open drain** + rezystor 10 kΩ do `+5 V`,
+  `CONFIG_APP_RELAY_OPEN_DRAIN=y` — elektrycznie równoważne konwerterowi (pin tylko
+  zwiera do masy, stan wysoki daje rezystor). W logu: `relay on GPIO10 (active low, open drain)`.
 
 ### ⚠️ Bezpieczeństwo 230 V
 - Wszystkie prace przy stronie sieciowej przy **odłączonym** zasilaniu.
@@ -259,13 +287,21 @@ nie wystawiać na internet.
 
 ## 6. Plan dla następnego agenta
 
+Kolejność wg priorytetu właściciela: **żarówka → czujnik → panel**, Matter na końcu
+(świadomie odłożony, patrz §2).
+
 ### Krok 1 — przekaźnik (bez 230 V!)
-1. Podłączyć: przekaźnik `VCC`→`5V`, `GND`→`G`, `IN`→`HV1` konwertera, `LV1`→`GPIO10`,
-   `LV`→`3.3`, `HV`→`5V`, oba `GND` konwertera do masy.
+1. Podłączyć jednym z trzech sposobów:
+   - z konwerterem (§3): `IN`→`HV1`, `LV1`→`GPIO10`, `LV`→`3.3`, `HV`→`5V`, oba `GND` do masy,
+   - wariant A: `GPIO10` wprost na `IN` (firmware bez zmian),
+   - wariant B: `GPIO10` + rezystor 10 kΩ do `+5 V` i `CONFIG_APP_RELAY_OPEN_DRAIN=y`.
+   Zawsze: przekaźnik `VCC`→`5V`, `GND`→`G`.
 2. Flash, potem `POST /api/light` lub krótkie wciśnięcie BOOT — sprawdzić kliknięcie
    przekaźnika i diodę na module; zmierzyć napięcie na `IN` (blisko 0 V = ON, ~5 V = OFF).
-3. Sprawdzić stan po resecie i po zaniku zasilania: przekaźnik musi zostać rozwarty.
-4. Dopiero po tym podłączać oprawę 230 V (§3, ostrzeżenia).
+3. **Kluczowy test wariantu A:** czy przekaźnik faktycznie odpada przy stanie wysokim
+   3,3 V. Jeśli nie — przejść na wariant B albo konwerter.
+4. Sprawdzić stan po resecie i po zaniku zasilania: przekaźnik musi zostać rozwarty.
+5. Dopiero po tym podłączać oprawę 230 V (§3, ostrzeżenia).
 
 ### Krok 2 — LD2420
 1. Podłączyć `3V3/GND/OT1→GPIO4/RX→GPIO5`.
@@ -280,15 +316,15 @@ nie wystawiać na internet.
    fabryczne są w `ld2420.cpp` (`FACTORY_MOVE_THRESH` / `FACTORY_STILL_THRESH`).
    Dodatkowy filtr aplikacyjny: `max_cm` / `min_cm` w `/api/config`.
 
-### Krok 3 — Matter
-1. Kody z logu: QR `MT:Y.K9042C00KA0648G00`, kod ręczny `34970112332`,
-   discriminator 3840 (domyślne dane testowe DAC — do użytku domowego OK, do
-   certyfikacji potrzebne własne certyfikaty w partycji `fctry`).
-2. Sparować przez Apple Home / Google Home / Home Assistant (Matter) albo `chip-tool`:
-   `chip-tool pairing ble-wifi 1 <SSID> <HASŁO> 20202021 3840`.
+### Krok 3 — Matter (odłożony, robić po żarówce i czujniku)
+1. Kody z logu: QR `MT:SAGA442C00KA0648G00`, kod ręczny `34970112332`,
+   discriminator 3840, VID `0xFFF1`, PID `0x8010` (testowe certyfikaty DAC — do użytku
+   domowego OK, do certyfikacji potrzebne własne w partycji `fctry`).
+2. Zalecana droga: **Home Assistant** + dodatek *Matter Server* (paruje po IP, bez huba).
+   Google Home wymaga huba Matter i IPv6 na routerze; `chip-tool` z WSL nie działa (§2).
 3. Sprawdzić: włączanie/wyłączanie z apki → klik przekaźnika; zmiana z panelu HTTP →
    aktualizacja stanu w apce; atrybut Occupancy na EP2 reaguje na obecność.
-4. Po commissioningu w logu pojawia się IP → otworzyć `http://<ip>/`.
+4. Zmierzyć `free_heap` po sparowaniu (BLE zwolnione) — patrz uwaga o RAM w §2.
 
 ### Krok 4 — dokończenie funkcji
 - [ ] Zmienić domyślne hasło panelu (`CONFIG_APP_WEB_PASS`).

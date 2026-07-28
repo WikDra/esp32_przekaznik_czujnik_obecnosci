@@ -19,6 +19,16 @@ menu "Swiatlo LD2420 - configuration"
                 y  -> GPIO low = relay energized = lamp ON (HW-307 / JQC3F-05VDC-C module).
                 n  -> GPIO high = relay energized.
 
+        config APP_RELAY_OPEN_DRAIN
+            bool "Drive the relay pin as open drain"
+            default n
+            help
+                Enable when the relay IN pin is wired straight to the GPIO (no level
+                shifter) together with an external 10 kO pull-up to +5 V. The GPIO then
+                only pulls low and the resistor provides the full 5 V high level, which
+                is what a 5 V low-level-trigger module needs to actually switch OFF.
+                Leave disabled when using the 4CH level shifter (it has its own pull-ups).
+
         config APP_LED_GPIO
             int "Status LED pin (-1 = none)"
             default 8

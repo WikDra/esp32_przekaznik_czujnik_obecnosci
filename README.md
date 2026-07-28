@@ -21,7 +21,7 @@ Notatki techniczne, stan weryfikacji i plan rozwoju: [`AGENTS.md`](AGENTS.md).
 | ESP32-C3 SuperMini (TENSTAR ROBOT) | 4 MB flash, USB-C = natywny USB (USB-Serial/JTAG) |
 | Przekaźnik 1-kanałowy 5 V (HW-307 / JQC3F-05VDC-C) | `IN / GND / VCC`, wyzwalanie **stanem niskim**, styki 10 A 250 VAC |
 | HLK-LD2420 v2.1 (radar 24 GHz) | pady `3V3 / GND / OT1 / RX / OT2`, logika 3,3 V, UART 115200 8N1 |
-| Konwerter poziomów 4CH (BSS138) | `LV / HV / GND` + kanały `LV1..LV4` / `HV1..HV4` |
+| Konwerter poziomów 4CH (BSS138) | `LV / HV / GND` + kanały `LV1..LV4` / `HV1..HV4` — opcjonalny, patrz §2.3a |
 | Zasilacz 5 V | zasila płytkę i cewkę przekaźnika |
 
 ## 2. Podłączenie
@@ -76,7 +76,57 @@ podaje na `IN` pełne 5 V. Bonus: podczas bootu/resetu pin ESP jest wejściem, a
 konwertera trzyma `IN` wysoko, więc przekaźnik jest rozwarty i żarówka zgaszona.
 
 Jeśli zmierzysz, że twój egzemplarz modułu poprawnie wyłącza się przy 3,3 V, konwerter
-można pominąć — ale to trzeba **zmierzyć**, nie założyć.
+można pominąć — ale to trzeba **zmierzyć**, nie założyć. Warianty bez konwertera: §2.3a.
+
+### 2.3a Warianty bez konwertera poziomów
+
+**Wariant A — GPIO wprost na `IN` (najprostszy, wymaga testu)**
+
+```
+  GPIO10 ──────────────► IN
+  5V     ──────────────► VCC
+  G      ──────────────► GND
+```
+
+Ustawienia firmware: domyślne (`CONFIG_APP_RELAY_OPEN_DRAIN=n`). Test po wgraniu:
+
+1. `POST /api/light {"on":true}` → przekaźnik klika, dioda na module świeci,
+   napięcie na `IN` ≈ 0 V.
+2. `POST /api/light {"on":false}` → przekaźnik **musi** odpaść (słyszalny klik,
+   dioda gaśnie), napięcie na `IN` ≈ 3,3 V.
+3. Powtórz kilka razy i sprawdź stan po resecie płytki.
+
+Jeśli w punkcie 2 przekaźnik **nie** odpada (zostaje załączony, dioda świeci) — to
+właśnie ten przypadek z tranzystorem PNP: 3,3 V nie wystarcza, by go zatkać. Wtedy
+wariant B albo konwerter z §2.3.
+
+**Wariant B — GPIO jako open drain + rezystor 10 kΩ do +5 V (1 element)**
+
+```
+                     +5V
+                      │
+                     [10k]
+                      │
+  GPIO10 ─────────────┴──► IN          (GPIO tylko zwiera do masy)
+  5V     ──────────────► VCC
+  G      ──────────────► GND
+```
+
+Ustawienia firmware: `CONFIG_APP_RELAY_OPEN_DRAIN=y` (w `menuconfig` → *Swiatlo LD2420*
+→ *Pin map* → *Drive the relay pin as open drain*, albo linijka w `sdkconfig.local`).
+Wtedy GPIO nigdy nie wystawia 3,3 V — stan wysoki robi rezystor, podając na `IN` pełne
+5 V, dokładnie jak konwerter. To elektrycznie równoważne rozwiązanie, tylko tańsze.
+W logu po starcie zobaczysz `relay on GPIO10 (active low, open drain)`.
+
+**Czego nie robić:** nie zasilać cewki z pinu `3.3` (potrzebuje ~70–80 mA i 5 V) i nie
+podawać 5 V na GPIO ESP32-C3 — piny nie są 5 V tolerant, `IN` przy 3,3 V logiki nigdy
+nie powinien być podciągany do ESP.
+
+Zalety wariantu z konwertera z §2.3: dodatkowa separacja szyn i pewność, że przy
+resecie/bootowaniu `IN` jest trzymany wysoko (żarówka zgaszona). Wariant B daje to samo
+zachowanie przy bootcie, bo pull-up jest zewnętrzny. Wariant A polega na tym, że w stanie
+wysokim pin sam wystawia 3,3 V — po resecie pin jest wejściem, więc `IN` „wisi” i stan
+przekaźnika jest nieokreślony do momentu inicjalizacji GPIO (zwykle < 300 ms).
 
 ### 2.4 Strona 230 V
 
@@ -182,11 +232,19 @@ curl -u admin:swiatlo -H "Content-Type: application/json" \
 Kody parowania są drukowane w logu na starcie (dopóki urządzenie nie jest sparowane):
 
 ```
-Setup QRCode:        MT:Y.K9042C00KA0648G00
+Setup QRCode:        MT:SAGA442C00KA0648G00
 Manual pairing code: 34970112332
 ```
 
-Sparuj telefonem (Apple Home / Google Home) albo Home Assistantem w tej samej sieci.
+Urządzenie zgłasza się jako VID `0xFFF1` (test VID) i PID `0x8010`. **Google Home wymaga
+huba Matter** (Nest Hub / głośnik Nest / Google TV) oraz IPv6 na routerze, a dla
+testowego VID także zarejestrowania integracji w Google Home Developer Console
+(device type *Light*, VID `0xFFF1`, PID `0x8010`). Apple Home też potrzebuje huba
+(HomePod / Apple TV). **Home Assistant** z dodatkiem *Matter Server* paruje bez
+dodatkowego sprzętu — to najprostsza droga.
+
+Zmiana `CONFIG_DEVICE_PRODUCT_ID` zmienia QR (kod ręczny zostaje ten sam, bo nie koduje
+VID/PID).
 Urządzenie zgłasza dwa endpointy: **1 = On/Off Light** (przekaźnik), **2 = Occupancy**
 (obecność z LD2420). Zmiana z apki i z panelu jest natychmiast widoczna po obu stronach.
 
