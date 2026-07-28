@@ -1,0 +1,8 @@
+# Only used for a smoke test on the ESP32-C6 dev board that is already on the desk
+# (COM5 / /dev/ttyACM*). The production target is esp32c3 (see sdkconfig.defaults.esp32c3).
+# Matter runs over Wi-Fi here as well - OpenThread stays disabled.
+CONFIG_IDF_TARGET="esp32c6"
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+CONFIG_OPENTHREAD_ENABLED=n
+CONFIG_ENABLE_MATTER_OVER_THREAD=n

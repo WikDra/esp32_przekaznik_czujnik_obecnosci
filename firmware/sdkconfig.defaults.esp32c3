@@ -1,0 +1,5 @@
+# ESP32-C3 SuperMini (TENSTAR ROBOT), 4 MB flash, no USB-UART bridge:
+# console must go through the native USB (USB Serial/JTAG) peripheral.
+CONFIG_IDF_TARGET="esp32c3"
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

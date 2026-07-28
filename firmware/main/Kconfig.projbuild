@@ -1,0 +1,152 @@
+menu "Swiatlo LD2420 - configuration"
+
+    menu "Pin map (ESP32-C3 SuperMini)"
+
+        config APP_RELAY_GPIO
+            int "Relay IN pin"
+            default 10
+            range 0 21
+            help
+                GPIO driving the IN pin of the 1-channel 5 V relay module.
+                Go through the 4CH level shifter (LV side -> GPIO, HV side -> relay IN, HV = 5 V):
+                a 3.3 V logic high is not guaranteed to switch OFF a 5 V low-level-trigger module.
+                Avoid strapping pins (0, 2, 8, 9).
+
+        config APP_RELAY_ACTIVE_LOW
+            bool "Relay module is low-level triggered"
+            default y
+            help
+                y  -> GPIO low = relay energized = lamp ON (HW-307 / JQC3F-05VDC-C module).
+                n  -> GPIO high = relay energized.
+
+        config APP_LED_GPIO
+            int "Status LED pin (-1 = none)"
+            default 8
+            range -1 21
+            help
+                On the ESP32-C3 SuperMini the on-board LED sits on GPIO8 and is active low.
+
+        config APP_LED_ACTIVE_LOW
+            bool "Status LED is active low"
+            default y
+
+        config APP_BUTTON_GPIO
+            int "Button pin (-1 = none)"
+            default 9
+            range -1 21
+            help
+                BOOT button on the ESP32-C3 SuperMini (GPIO9, active low, has a pull-up).
+                Short press toggles the lamp, long press (>=5 s) performs a Matter factory reset.
+
+        config APP_LD2420_UART_PORT
+            int "LD2420 UART port"
+            default 1
+            range 0 1
+
+        config APP_LD2420_RX_GPIO
+            int "LD2420 UART RX pin (ESP RX <- sensor OT1/TX)"
+            default 4
+            range 0 21
+
+        config APP_LD2420_TX_GPIO
+            int "LD2420 UART TX pin (ESP TX -> sensor RX)"
+            default 5
+            range 0 21
+            help
+                Required: without TX the thresholds cannot be written to the sensor.
+
+        config APP_LD2420_OT2_GPIO
+            int "LD2420 OT2 digital presence pin (-1 = unused)"
+            default -1
+            range -1 21
+            help
+                Optional. The driver derives presence from the UART stream, OT2 is only
+                used as a redundant/fast signal when set to a valid GPIO.
+
+    endmenu
+
+    menu "Default behaviour"
+
+        config APP_AUTO_MODE_DEFAULT
+            bool "Presence automation enabled by default"
+            default y
+
+        config APP_HOLD_SECONDS_DEFAULT
+            int "Default hold time after presence is lost (s)"
+            default 60
+            range 0 3600
+
+        config APP_MAX_DISTANCE_CM_DEFAULT
+            int "Default max accepted distance (cm, 0 = no limit)"
+            default 400
+            range 0 1000
+
+        config APP_MIN_DISTANCE_CM_DEFAULT
+            int "Default min accepted distance (cm)"
+            default 0
+            range 0 1000
+
+        config APP_RESTORE_STATE_DEFAULT
+            bool "Restore last lamp state after reboot"
+            default n
+
+    endmenu
+
+    menu "Power cycle override"
+
+        config APP_POWER_CYCLE_FORCE_ON
+            bool "Force the lamp ON after N quick power cycles"
+            default y
+            help
+                Lets you switch the lamp on from the wall fuse / socket when the radar
+                or the network misbehaves: cut the power twice in quick succession and
+                the lamp comes up ON with the presence automation bypassed until the
+                next explicit OFF (Matter, panel or button).
+                A quick reset counts the same way as a power cut.
+
+        config APP_POWER_CYCLE_COUNT
+            int "Number of power cycles that triggers force ON"
+            depends on APP_POWER_CYCLE_FORCE_ON
+            default 2
+            range 2 5
+
+        config APP_POWER_CYCLE_WINDOW_S
+            int "Power cycle counting window (s)"
+            depends on APP_POWER_CYCLE_FORCE_ON
+            default 10
+            range 2 60
+            help
+                If the device stays powered for longer than this, the counter is cleared.
+
+    endmenu
+
+    menu "HTTP panel"
+
+        config APP_WEB_PORT
+            int "HTTP port"
+            default 80
+            range 1 65535
+
+        config APP_WEB_AUTH
+            bool "Require HTTP Basic authentication"
+            default y
+            help
+                Strongly recommended: the panel switches mains voltage.
+                Without it anybody on the LAN can toggle the lamp.
+
+        config APP_WEB_USER
+            string "HTTP user"
+            depends on APP_WEB_AUTH
+            default "admin"
+
+        config APP_WEB_PASS
+            string "HTTP password"
+            depends on APP_WEB_AUTH
+            default "swiatlo"
+            help
+                CHANGE THIS. HTTP Basic auth is sent base64-encoded over plain HTTP,
+                so it only protects against casual access on a trusted LAN.
+
+    endmenu
+
+endmenu

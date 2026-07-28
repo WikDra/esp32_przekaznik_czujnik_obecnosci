@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Światło LD2420</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 1rem; max-width: 46rem; }
+  h1 { font-size: 1.25rem; margin: 0 0 .75rem; }
+  h2 { font-size: 1rem; margin: 1.25rem 0 .5rem; }
+  section { border: 1px solid #8884; border-radius: .5rem; padding: .75rem; margin-bottom: .75rem; }
+  .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin: .35rem 0; }
+  label { min-width: 13rem; }
+  input[type=number] { width: 6rem; }
+  button { padding: .45rem .8rem; border-radius: .4rem; border: 1px solid #8886; cursor: pointer; }
+  button.primary { background: #2563eb; color: #fff; border-color: #1d4ed8; }
+  .pill { padding: .1rem .5rem; border-radius: 1rem; font-size: .8rem; border: 1px solid #8886; }
+  .on { background: #16a34a; color: #fff; }
+  .off { background: #6b7280; color: #fff; }
+  table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+  th, td { border: 1px solid #8884; padding: .2rem .4rem; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  #msg { min-height: 1.2rem; font-size: .85rem; }
+  .muted { opacity: .7; font-size: .85rem; }
+</style>
+</head>
+<body>
+<h1>Światło LD2420 <span id="lampPill" class="pill off">?</span></h1>
+<div id="msg" class="muted">Ładowanie…</div>
+
+<section>
+  <div class="row">
+    <button class="primary" onclick="setLight(true)">Włącz</button>
+    <button onclick="setLight(false)">Wyłącz</button>
+    <button onclick="toggleLight()">Przełącz</button>
+  </div>
+  <div class="row muted">
+    Obecność: <span id="presence">?</span> ·
+    Odległość: <span id="distance">?</span> cm ·
+    Auto-off za: <span id="autooff">?</span> s ·
+    Źródło: <span id="source">?</span> ·
+    Wymuszone (power-cycle): <span id="forceon">?</span>
+  </div>
+  <div class="row muted">
+    Czujnik: <span id="link">?</span> · FW: <span id="fw">?</span> · tryb: <span id="mode">?</span> ·
+    IP: <span id="ip">?</span> · Matter: <span id="matter">?</span> · heap: <span id="heap">?</span> B
+  </div>
+</section>
+
+<section>
+  <h2>Automatyka</h2>
+  <div class="row"><label for="auto_mode">Automatyka obecności</label>
+    <input type="checkbox" id="auto_mode"></div>
+  <div class="row"><label for="hold_s">Czas świecenia po utracie obecności (s)</label>
+    <input type="number" id="hold_s" min="0" max="3600"></div>
+  <div class="row"><label for="max_cm">Maks. akceptowana odległość (cm, 0 = brak)</label>
+    <input type="number" id="max_cm" min="0" max="1000"></div>
+  <div class="row"><label for="min_cm">Min. akceptowana odległość (cm)</label>
+    <input type="number" id="min_cm" min="0" max="1000"></div>
+  <div class="row"><label for="restore_state">Odtwarzaj stan po restarcie</label>
+    <input type="checkbox" id="restore_state"></div>
+  <div class="row"><button class="primary" onclick="saveConfig()">Zapisz</button></div>
+</section>
+
+<section>
+  <h2>Czujnik LD2420</h2>
+  <div class="row muted">1 bramka ≈ 0,7 m. Wartości zapisywane są w pamięci modułu.</div>
+  <div class="row"><label for="min_gate">Bramka min (0-15)</label>
+    <input type="number" id="min_gate" min="0" max="15"></div>
+  <div class="row"><label for="max_gate">Bramka maks (0-15)</label>
+    <input type="number" id="max_gate" min="0" max="15"></div>
+  <div class="row"><label for="timeout_s">Timeout modułu (s)</label>
+    <input type="number" id="timeout_s" min="0" max="65535"></div>
+  <div class="row">
+    <button class="primary" onclick="saveSensor()">Zapisz zakres</button>
+    <button onclick="sensorAction('refresh')">Odczytaj z modułu</button>
+    <button onclick="sensorAction('restart')">Restart modułu</button>
+    <button onclick="sensorAction('factory_reset')">Ustawienia fabryczne</button>
+  </div>
+  <h2>Progi bramek</h2>
+  <table id="gates"><thead><tr><th>Bramka</th><th>Energia</th><th>Ruch</th><th>Spoczynek</th><th></th></tr></thead>
+    <tbody></tbody></table>
+</section>
+
+<section>
+  <h2>Urządzenie</h2>
+  <div class="row"><button onclick="reboot()">Restart ESP32</button>
+    <span class="muted">Uptime: <span id="uptime">?</span> s</span></div>
+</section>
+
+<script>
+let editing = false;
+document.addEventListener('focusin', e => { if (e.target.tagName === 'INPUT') editing = true; });
+
+function msg(text, isError) {
+  const el = document.getElementById('msg');
+  el.textContent = text;
+  el.style.color = isError ? '#dc2626' : '';
+}
+
+async function api(path, body) {
+  const opts = body ? { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body) } : {};
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) { throw new Error(data.error || res.status); }
+  return data;
+}
+
+function num(id) { return parseInt(document.getElementById(id).value, 10); }
+
+async function refresh() {
+  try {
+    const s = await api('/api/status');
+    const pill = document.getElementById('lampPill');
+    pill.textContent = s.on ? 'ZAŁĄCZONE' : 'WYŁĄCZONE';
+    pill.className = 'pill ' + (s.on ? 'on' : 'off');
+    document.getElementById('presence').textContent = s.presence ? 'tak' : 'nie';
+    document.getElementById('distance').textContent = s.distance_cm;
+    document.getElementById('autooff').textContent = s.auto_off_in;
+    document.getElementById('source').textContent = s.source;
+    document.getElementById('forceon').textContent = s.force_on ? 'tak' : 'nie';
+    document.getElementById('link').textContent = s.sensor.link_ok ? 'OK' : 'brak danych';
+    document.getElementById('fw').textContent = s.sensor.fw;
+    document.getElementById('mode').textContent = s.sensor.mode;
+    document.getElementById('ip').textContent = s.system.ip;
+    document.getElementById('matter').textContent = s.system.commissioned ? 'sparowany' : 'niesparowany';
+    document.getElementById('heap').textContent = s.system.free_heap;
+    document.getElementById('uptime').textContent = s.system.uptime_s;
+
+    if (!editing) {
+      document.getElementById('auto_mode').checked = s.config.auto_mode;
+      document.getElementById('restore_state').checked = s.config.restore_state;
+      document.getElementById('hold_s').value = s.config.hold_s;
+      document.getElementById('max_cm').value = s.config.max_cm;
+      document.getElementById('min_cm').value = s.config.min_cm;
+      document.getElementById('min_gate').value = s.sensor.min_gate;
+      document.getElementById('max_gate').value = s.sensor.max_gate;
+      document.getElementById('timeout_s').value = s.sensor.timeout_s;
+    }
+
+    const tbody = document.querySelector('#gates tbody');
+    if (!editing || tbody.children.length === 0) {
+      tbody.innerHTML = '';
+      for (const g of s.sensor.gates) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${g.gate}</td><td>${g.energy}</td>` +
+          `<td><input type="number" id="mv${g.gate}" min="0" max="65535" value="${g.move}"></td>` +
+          `<td><input type="number" id="st${g.gate}" min="0" max="65535" value="${g.still}"></td>` +
+          `<td><button onclick="saveGate(${g.gate})">Zapisz</button></td>`;
+        tbody.appendChild(tr);
+      }
+    } else {
+      for (const g of s.sensor.gates) {
+        const cell = tbody.children[g.gate];
+        if (cell) { cell.children[1].textContent = g.energy; }
+      }
+    }
+    if (document.getElementById('msg').textContent === 'Ładowanie…') { msg(''); }
+  } catch (e) {
+    msg('Błąd odczytu statusu: ' + e.message, true);
+  }
+}
+
+async function setLight(on) {
+  try { await api('/api/light', { on }); msg('OK'); refresh(); }
+  catch (e) { msg('Błąd: ' + e.message, true); }
+}
+async function toggleLight() {
+  try { await api('/api/light', { toggle: true }); msg('OK'); refresh(); }
+  catch (e) { msg('Błąd: ' + e.message, true); }
+}
+async function saveConfig() {
+  try {
+    await api('/api/config', {
+      auto_mode: document.getElementById('auto_mode').checked,
+      restore_state: document.getElementById('restore_state').checked,
+      hold_s: num('hold_s'), max_cm: num('max_cm'), min_cm: num('min_cm')
+    });
+    editing = false; msg('Zapisano ustawienia automatyki'); refresh();
+  } catch (e) { msg('Błąd: ' + e.message, true); }
+}
+async function saveSensor() {
+  try {
+    await api('/api/sensor', { min_gate: num('min_gate'), max_gate: num('max_gate'),
+                               timeout_s: num('timeout_s') });
+    editing = false; msg('Zapisano zakres czujnika'); refresh();
+  } catch (e) { msg('Błąd: ' + e.message, true); }
+}
+async function saveGate(gate) {
+  try {
+    await api('/api/sensor', { gate, move: num('mv' + gate), still: num('st' + gate) });
+    editing = false; msg('Zapisano progi bramki ' + gate); refresh();
+  } catch (e) { msg('Błąd: ' + e.message, true); }
+}
+async function sensorAction(action) {
+  try { await api('/api/sensor', { action }); editing = false; msg('Wykonano: ' + action); refresh(); }
+  catch (e) { msg('Błąd: ' + e.message, true); }
+}
+async function reboot() {
+  if (!confirm('Zrestartować ESP32?')) return;
+  try { await api('/api/reboot', {}); msg('Restart…'); } catch (e) { msg('Błąd: ' + e.message, true); }
+}
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

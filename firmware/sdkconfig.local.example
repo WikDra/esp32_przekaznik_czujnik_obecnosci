@@ -1,0 +1,9 @@
+# Lokalne dane Wi-Fi (plik jest w .gitignore - NIE commitować).
+# Kopiuj do sdkconfig.local i wpisz swoje dane. Skrypt build.sh dokleja ten plik
+# na koniec listy SDKCONFIG_DEFAULTS, jeśli istnieje.
+#
+# Dzięki temu ESP łączy się z Wi-Fi jeszcze przed commissioningiem Matter,
+# czyli panel HTTP jest dostępny od pierwszego bootu. Matter i tak może później
+# nadpisać te dane własnymi (zapisuje je w NVS).
+CONFIG_DEFAULT_WIFI_SSID="MojeWiFi"
+CONFIG_DEFAULT_WIFI_PASSWORD="tajnehaslo"
