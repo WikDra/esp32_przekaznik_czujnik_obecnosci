@@ -3,6 +3,7 @@
 Notatki projektu i plan pracy dla kolejnego agenta. Stan na 2026-07-28.
 
 Repo: `https://github.com/WikDra/esp32_przekaznik_czujnik_obecnosci` (prywatne).
+Instrukcja montażu i użytkowania dla człowieka: [`README.md`](README.md).
 
 ## 1. Cel
 
