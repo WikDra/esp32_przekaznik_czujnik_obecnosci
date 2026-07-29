@@ -37,16 +37,30 @@ Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3 na COM5, sieć `192.168.8.12
 | Zapis ustawień do NVS | `POST /api/config {"hold_s":90,"max_cm":350}` → odczyt zwraca te wartości |
 | Wymuszenie ON po 2 szybkich odcięciach zasilania | `W light: 2 power cycles detected - forcing the lamp ON`, `lamp ON (source: power_cycle)` |
 | Sterownik LD2420 — brak czujnika nie blokuje bootu | `W ld2420: sensor not responding on UART1 (rx=4 tx=5), retrying in 30 s` |
+| **LD2420 po UART** (test właściciela, 2026-07-29, ESP z powerbanka) | działa: `link_ok=true`, `fw=v1.6.1`, `mode=energy`, odczytane `min_gate=0 max_gate=12 timeout=30s` i wszystkie 16 par progów |
+| **Automatyka end-to-end: radar → filtr → przekaźnik** | działa: przy `max_cm=50`, `hold_s=1` wejście w promień < 50 cm przełącza przekaźnik, wyjście gasi |
 | Przekaźnik przez konwerter poziomów (test właściciela, 2026-07-29, ESP z powerbanka) | działa: `NO`–`COM` = 0 Ω przy ON, rozwarte przy OFF |
 | Przekaźnik `GPIO10` **wprost** na `IN` (wariant A) | **nie działa** — przekaźnik załącza się i zostaje załączony (3,3 V nie zatyka PNP) |
 | Skrypty build (WSL) / flash + monitor (Windows) | działają, patrz §5 |
 
 **Niezweryfikowane** (wymaga podłączonego sprzętu / kontrolera Matter):
 
-- przekaźnik sterowany z firmware (dotychczasowy test właściciela był na samym module,
-  bez sprawdzania `POST /api/light` i stanu po resecie),
-- komunikacja UART z LD2420 (odczyt wersji FW, energii bramek, zapis progów),
-- commissioning Matter i synchronizacja OnOff apka ↔ panel.
+- commissioning Matter i synchronizacja OnOff apka ↔ panel (odłożone, patrz niżej),
+- praca z oprawą 230 V i długi test stabilności (24 h),
+- zachowanie przekaźnika po zaniku zasilania i po resecie z podłączoną oprawą,
+- **do wgrania przy najbliższym podłączeniu USB:** poprawka atrybucji źródła zmiany
+  (`source` w `/api/status` pokazywało `matter` także dla zmian z panelu/automatyki,
+  bo nasz własny raport atrybutu wracał przez `app_attribute_update_cb`).
+
+### Kalibracja — stan na 2026-07-29
+
+Właściciel wyregulował progi w module (bramki 2–4 podniesione: `move` 3000/2000/500
+wobec fabrycznych 400/250/250) i testował z `max_cm=50`, `hold_s=1` — celowo ostre
+nastawy do sprawdzenia reakcji. Do pracy docelowej: `max_cm=0` (filtr aplikacyjny
+wyłączony, zasięgiem rządzi `max_gate`) albo 400–500, `hold_s` 30–120 s.
+Warto jeszcze sprawdzić `/api/status` przy **pustym** pomieszczeniu — jeśli
+`sensor.raw_presence` zostaje `1`, obniżyć `max_gate` albo podnieść progi bramek,
+które pokazują wysoką energię (bramka 2 pokazywała 9908 przy progu 3000).
 ### Matter — stan na 2026-07-28 (wstrzymane przez właściciela)
 
 Parowanie odłożone; właściciel chce najpierw uruchomić żarówkę + czujnik + panel.

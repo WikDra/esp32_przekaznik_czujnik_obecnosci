@@ -94,7 +94,12 @@ static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16
 {
     if (type == PRE_UPDATE && endpoint_id == app_light_endpoint_id && cluster_id == OnOff::Id &&
         attribute_id == OnOff::Attributes::OnOff::Id) {
-        app_light_set(val->val.b, LIGHT_SRC_MATTER);
+        /* Skip updates that only mirror the current state - those are the reports we push
+         * ourselves from app_light_set() (panel, button, automation, boot defaults).
+         * Without this the reported source would always end up as "matter". */
+        if (val->val.b != app_light_get()) {
+            app_light_set(val->val.b, LIGHT_SRC_MATTER);
+        }
     }
     return ESP_OK;
 }
