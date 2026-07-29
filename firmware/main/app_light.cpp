@@ -36,6 +36,7 @@ static bool s_presence;
 static uint16_t s_distance_cm;
 static int64_t s_auto_off_at_us; /* 0 = no pending auto-off */
 static bool s_force_on;          /* power-cycle override active */
+static bool s_in_window;         /* hysteresis state of the distance window */
 
 static const char *src_name(light_src_t src)
 {
@@ -151,21 +152,59 @@ uint32_t app_light_auto_off_in(void)
     return left > 0 ? (uint32_t)(left / 1000000) : 0;
 }
 
-/* Presence callback from the LD2420 driver. Applies the distance window and
+/* Distance window with hysteresis: occupancy is entered inside [min_cm, max_cm] and
+ * only cleared once the target moves further than max_cm + hyst_cm (or closer than
+ * min_cm - hyst_cm). Returns true when the distance counts as "inside". */
+static bool distance_in_window(uint16_t distance_cm)
+{
+    app_settings_t *cfg = app_settings();
+
+    if (cfg->max_cm == 0 && cfg->min_cm == 0) {
+        return true; /* filtr odległości wyłączony */
+    }
+
+    uint32_t max_limit = cfg->max_cm;
+    uint32_t min_limit = cfg->min_cm;
+    if (s_in_window) {
+        /* rozszerzone granice, dopóki uznajemy obecność */
+        if (max_limit) {
+            max_limit += cfg->hyst_cm;
+        }
+        min_limit = (min_limit > cfg->hyst_cm) ? (min_limit - cfg->hyst_cm) : 0;
+    }
+
+    bool inside = (max_limit == 0 || distance_cm <= max_limit) && distance_cm >= min_limit;
+    s_in_window = inside;
+    return inside;
+}
+
+/* Presence callback from the LD2420 driver. Applies the configured presence source and
  * drives the automation on rising edges only, so a manual OFF is not overridden
  * while somebody is still in the room. */
 void app_light_on_presence(bool presence, uint16_t distance_cm)
 {
     app_settings_t *cfg = app_settings();
-    bool accepted = presence;
+    bool accepted;
 
-    if (presence) {
-        if (cfg->max_cm > 0 && distance_cm > cfg->max_cm) {
-            accepted = false;
+    switch (cfg->presence_src) {
+    case PRESENCE_SRC_DISTANCE:
+        /* Flaga modułu ignorowana - liczy się tylko okno odległości. Wymaga max_cm > 0,
+         * inaczej każda ramka byłaby "obecnością"; wtedy wracamy do flagi. */
+        if (cfg->max_cm == 0) {
+            accepted = presence;
+        } else {
+            accepted = (distance_cm > 0) && distance_in_window(distance_cm);
         }
-        if (distance_cm < cfg->min_cm) {
-            accepted = false;
-        }
+        break;
+
+    case PRESENCE_SRC_FLAG:
+        accepted = presence;
+        break;
+
+    case PRESENCE_SRC_AND:
+    default:
+        accepted = presence && distance_in_window(distance_cm);
+        break;
     }
 
     xSemaphoreTake(s_lock, portMAX_DELAY);

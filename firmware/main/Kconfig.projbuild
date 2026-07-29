@@ -96,6 +96,25 @@ menu "Swiatlo LD2420 - configuration"
             default 0
             range 0 1000
 
+        config APP_HYSTERESIS_CM_DEFAULT
+            int "Default hysteresis around the distance window (cm)"
+            default 30
+            range 0 300
+            help
+                Occupancy is entered at max_cm and only cleared above max_cm + hysteresis.
+                Prevents the lamp from flickering when somebody stands at the edge of the
+                configured range.
+
+        config APP_PRESENCE_SRC_DEFAULT
+            int "Default presence source (0 = flag AND distance, 1 = distance only, 2 = flag only)"
+            default 1
+            range 0 2
+            help
+                Many LD2420 units keep the presence flag at 1 permanently (it also reacts
+                to walls and furniture), so deriving occupancy from the reported distance
+                (1) is the more reliable default. Mode 1 needs max_cm > 0; with max_cm = 0
+                the firmware falls back to the module flag.
+
         config APP_RESTORE_STATE_DEFAULT
             bool "Restore last lamp state after reboot"
             default n

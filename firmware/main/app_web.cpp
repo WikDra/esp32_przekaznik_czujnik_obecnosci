@@ -191,6 +191,12 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(config, "hold_s", cfg->hold_s);
     cJSON_AddNumberToObject(config, "max_cm", cfg->max_cm);
     cJSON_AddNumberToObject(config, "min_cm", cfg->min_cm);
+    cJSON_AddNumberToObject(config, "hyst_cm", cfg->hyst_cm);
+    cJSON_AddNumberToObject(config, "presence_src", cfg->presence_src);
+    cJSON_AddStringToObject(config, "presence_src_name",
+                            cfg->presence_src == PRESENCE_SRC_DISTANCE ? "distance"
+                            : cfg->presence_src == PRESENCE_SRC_FLAG   ? "flag"
+                                                                      : "and");
     cJSON_AddBoolToObject(config, "restore_state", cfg->restore_state);
 
     cJSON *sensor = cJSON_AddObjectToObject(root, "sensor");
@@ -282,6 +288,24 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     if (json_get_uint(body, "min_cm", 1000, &u)) {
         cfg->min_cm = (uint16_t)u;
     }
+    if (json_get_uint(body, "hyst_cm", 300, &u)) {
+        cfg->hyst_cm = (uint16_t)u;
+    }
+    const cJSON *psrc = cJSON_GetObjectItemCaseSensitive(body, "presence_src");
+    if (cJSON_IsString(psrc) && psrc->valuestring) {
+        if (strcmp(psrc->valuestring, "distance") == 0) {
+            cfg->presence_src = PRESENCE_SRC_DISTANCE;
+        } else if (strcmp(psrc->valuestring, "flag") == 0) {
+            cfg->presence_src = PRESENCE_SRC_FLAG;
+        } else if (strcmp(psrc->valuestring, "and") == 0) {
+            cfg->presence_src = PRESENCE_SRC_AND;
+        } else {
+            cJSON_Delete(body);
+            return send_error(req, 400, "presence_src must be \"and\", \"distance\" or \"flag\"");
+        }
+    } else if (json_get_uint(body, "presence_src", PRESENCE_SRC_FLAG, &u)) {
+        cfg->presence_src = (uint8_t)u;
+    }
     cJSON_Delete(body);
 
     esp_err_t err = app_settings_save();
@@ -291,6 +315,8 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "hold_s", cfg->hold_s);
     cJSON_AddNumberToObject(root, "max_cm", cfg->max_cm);
     cJSON_AddNumberToObject(root, "min_cm", cfg->min_cm);
+    cJSON_AddNumberToObject(root, "hyst_cm", cfg->hyst_cm);
+    cJSON_AddNumberToObject(root, "presence_src", cfg->presence_src);
     cJSON_AddBoolToObject(root, "restore_state", cfg->restore_state);
     return send_json(req, root, err == ESP_OK ? 200 : 500);
 }

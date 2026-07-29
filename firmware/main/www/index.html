@@ -58,6 +58,14 @@
     <input type="number" id="max_cm" min="0" max="1000"></div>
   <div class="row"><label for="min_cm">Min. akceptowana odległość (cm)</label>
     <input type="number" id="min_cm" min="0" max="1000"></div>
+  <div class="row"><label for="hyst_cm">Histereza okna odległości (cm)</label>
+    <input type="number" id="hyst_cm" min="0" max="300"></div>
+  <div class="row"><label for="presence_src">Źródło obecności</label>
+    <select id="presence_src">
+      <option value="distance">odległość (flaga modułu ignorowana)</option>
+      <option value="and">flaga modułu ORAZ odległość</option>
+      <option value="flag">tylko flaga modułu</option>
+    </select></div>
   <div class="row"><label for="restore_state">Odtwarzaj stan po restarcie</label>
     <input type="checkbox" id="restore_state"></div>
   <div class="row"><button class="primary" onclick="saveConfig()">Zapisz</button></div>
@@ -135,6 +143,8 @@ async function refresh() {
       document.getElementById('hold_s').value = s.config.hold_s;
       document.getElementById('max_cm').value = s.config.max_cm;
       document.getElementById('min_cm').value = s.config.min_cm;
+      document.getElementById('hyst_cm').value = s.config.hyst_cm;
+      document.getElementById('presence_src').value = s.config.presence_src_name;
       document.getElementById('min_gate').value = s.sensor.min_gate;
       document.getElementById('max_gate').value = s.sensor.max_gate;
       document.getElementById('timeout_s').value = s.sensor.timeout_s;
@@ -176,7 +186,9 @@ async function saveConfig() {
     await api('/api/config', {
       auto_mode: document.getElementById('auto_mode').checked,
       restore_state: document.getElementById('restore_state').checked,
-      hold_s: num('hold_s'), max_cm: num('max_cm'), min_cm: num('min_cm')
+      hold_s: num('hold_s'), max_cm: num('max_cm'), min_cm: num('min_cm'),
+      hyst_cm: num('hyst_cm'),
+      presence_src: document.getElementById('presence_src').value
     });
     editing = false; msg('Zapisano ustawienia automatyki'); refresh();
   } catch (e) { msg('Błąd: ' + e.message, true); }

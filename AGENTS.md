@@ -37,7 +37,9 @@ Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3 na COM5, sieć `192.168.8.12
 | Zapis ustawień do NVS | `POST /api/config {"hold_s":90,"max_cm":350}` → odczyt zwraca te wartości |
 | Wymuszenie ON po 2 szybkich odcięciach zasilania | `W light: 2 power cycles detected - forcing the lamp ON`, `lamp ON (source: power_cycle)` |
 | Sterownik LD2420 — brak czujnika nie blokuje bootu | `W ld2420: sensor not responding on UART1 (rx=4 tx=5), retrying in 30 s` |
-| **LD2420 po UART** (test właściciela, 2026-07-29, ESP z powerbanka) | działa: `link_ok=true`, `fw=v1.6.1`, `mode=energy`, odczytane `min_gate=0 max_gate=12 timeout=30s` i wszystkie 16 par progów |
+| **LD2420 po UART** (log urządzenia, 2026-07-29) | `ld2420: firmware v1.6.1`, `config: min_gate=0 max_gate=12 timeout=30s`, `sensor ready (mode=energy)` |
+| **Obecność z odległości + histereza** (`presence_src=distance`, `hyst_cm=30`) | zweryfikowane na żywo przy `max_cm=50`: wejście `dist=14/46` → `presence=true`, trzymanie przy `dist=74` (≤ 50+30), wyjście przy `dist=110`, brak wejścia przy `dist=52` |
+| **Atrybucja źródła zmiany** | naprawione i wgrane: `src=web` po `POST /api/light`, `src=auto` przy automatyce (wcześniej zawsze `matter`) |
 | **Automatyka end-to-end: radar → filtr → przekaźnik** | działa: przy `max_cm=50`, `hold_s=1` wejście w promień < 50 cm przełącza przekaźnik, wyjście gasi |
 | Przekaźnik przez konwerter poziomów (test właściciela, 2026-07-29, ESP z powerbanka) | działa: `NO`–`COM` = 0 Ω przy ON, rozwarte przy OFF |
 | Przekaźnik `GPIO10` **wprost** na `IN` (wariant A) | **nie działa** — przekaźnik załącza się i zostaje załączony (3,3 V nie zatyka PNP) |
@@ -47,20 +49,27 @@ Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3 na COM5, sieć `192.168.8.12
 
 - commissioning Matter i synchronizacja OnOff apka ↔ panel (odłożone, patrz niżej),
 - praca z oprawą 230 V i długi test stabilności (24 h),
-- zachowanie przekaźnika po zaniku zasilania i po resecie z podłączoną oprawą,
-- **do wgrania przy najbliższym podłączeniu USB:** poprawka atrybucji źródła zmiany
-  (`source` w `/api/status` pokazywało `matter` także dla zmian z panelu/automatyki,
-  bo nasz własny raport atrybutu wracał przez `app_attribute_update_cb`).
+- zachowanie przekaźnika po zaniku zasilania i po resecie z podłączoną oprawą.
 
-### Kalibracja — stan na 2026-07-29
+### Kalibracja i źródło obecności — stan na 2026-07-29
 
-Właściciel wyregulował progi w module (bramki 2–4 podniesione: `move` 3000/2000/500
-wobec fabrycznych 400/250/250) i testował z `max_cm=50`, `hold_s=1` — celowo ostre
-nastawy do sprawdzenia reakcji. Do pracy docelowej: `max_cm=0` (filtr aplikacyjny
-wyłączony, zasięgiem rządzi `max_gate`) albo 400–500, `hold_s` 30–120 s.
-Warto jeszcze sprawdzić `/api/status` przy **pustym** pomieszczeniu — jeśli
-`sensor.raw_presence` zostaje `1`, obniżyć `max_gate` albo podnieść progi bramek,
-które pokazują wysoką energię (bramka 2 pokazywała 9908 przy progu 3000).
+**Flaga obecności tego egzemplarza LD2420 jest na stałe `1`** (potwierdzone przez
+właściciela i widoczne jako `sensor.raw_presence` w `/api/status`) — reaguje też na ściany
+i meble. Dlatego obecność liczona jest **z odległości**, a flaga ignorowana:
+`presence_src` = `distance` (domyślne, `CONFIG_APP_PRESENCE_SRC_DEFAULT=1`),
+alternatywy: `and` (flaga ORAZ okno) i `flag` (tylko flaga). Tryb `distance` wymaga
+`max_cm > 0`; przy `max_cm=0` firmware wraca do flagi, żeby nie uznawać każdej ramki
+za obecność.
+
+Do okna odległości dołożona **histereza** `hyst_cm` (domyślnie 30 cm): wejście przy
+`max_cm`, wyjście dopiero powyżej `max_cm + hyst_cm`. Bez niej przy chodzeniu na granicy
+okna światło migotało (widać to było w odczytach przy `max_cm=50`, `hold_s=1`).
+
+Progi w module właściciel już podniósł na bramkach 2–4 (`move` 3000/2000/500 wobec
+fabrycznych 400/250/250), `max_gate=12`, `timeout=30 s`. Ustawienia testowe podczas prób:
+`max_cm=50`, `hold_s=1` — celowo ostre. Do pracy docelowej: `max_cm` 400–500 (albo mniej,
+zależnie od montażu) i `hold_s` 30–120 s. Uwaga: realny czas gaszenia w trybie `and`/`flag`
+to `timeout` modułu (30 s) **plus** `hold_s`; w trybie `distance` liczy się tylko `hold_s`.
 ### Matter — stan na 2026-07-28 (wstrzymane przez właściciela)
 
 Parowanie odłożone; właściciel chce najpierw uruchomić żarówkę + czujnik + panel.
@@ -287,7 +296,7 @@ Sekwencja startowa ustawia atrybut Matter OnOff na **rzeczywisty** stan przekaź
 | GET | `/` | – | panel HTML |
 | GET | `/api/status` | – | pełny stan: światło, obecność, dystans, ustawienia, czujnik (bramki, progi), IP, heap |
 | POST | `/api/light` | `{"on":true}` / `{"toggle":true}` | sterowanie żarówką |
-| POST | `/api/config` | `{"auto_mode":true,"hold_s":60,"max_cm":400,"min_cm":0,"restore_state":false}` | ustawienia aplikacji (NVS) |
+| POST | `/api/config` | `{"auto_mode":true,"hold_s":60,"max_cm":400,"min_cm":0,"hyst_cm":30,"presence_src":"distance","restore_state":false}` | ustawienia aplikacji (NVS) |
 | POST | `/api/sensor` | `{"min_gate":1,"max_gate":6,"timeout_s":30}` | zakres i timeout modułu |
 | POST | `/api/sensor` | `{"gate":3,"move":250,"still":200}` | progi jednej bramki (1 bramka ≈ 0,7 m) |
 | POST | `/api/sensor` | `{"mode":"energy"\|"simple"}` | tryb wyjścia modułu |

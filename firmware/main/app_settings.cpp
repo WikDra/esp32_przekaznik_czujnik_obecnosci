@@ -22,6 +22,8 @@ static void load_defaults(void)
     s_settings.hold_s = CONFIG_APP_HOLD_SECONDS_DEFAULT;
     s_settings.max_cm = CONFIG_APP_MAX_DISTANCE_CM_DEFAULT;
     s_settings.min_cm = CONFIG_APP_MIN_DISTANCE_CM_DEFAULT;
+    s_settings.hyst_cm = CONFIG_APP_HYSTERESIS_CM_DEFAULT;
+    s_settings.presence_src = CONFIG_APP_PRESENCE_SRC_DEFAULT;
 #ifdef CONFIG_APP_RESTORE_STATE_DEFAULT
     s_settings.restore_state = true;
 #else
@@ -55,6 +57,12 @@ esp_err_t app_settings_init(void)
     if (nvs_get_u16(h, "min_cm", &u16) == ESP_OK) {
         s_settings.min_cm = u16;
     }
+    if (nvs_get_u16(h, "hyst_cm", &u16) == ESP_OK) {
+        s_settings.hyst_cm = u16;
+    }
+    if (nvs_get_u8(h, "psrc", &u8) == ESP_OK && u8 <= PRESENCE_SRC_FLAG) {
+        s_settings.presence_src = u8;
+    }
     if (nvs_get_u8(h, "restore", &u8) == ESP_OK) {
         s_settings.restore_state = u8 != 0;
     }
@@ -63,9 +71,9 @@ esp_err_t app_settings_init(void)
     }
     nvs_close(h);
 
-    ESP_LOGI(TAG, "loaded: auto=%d hold=%us range=%u..%ucm restore=%d last_on=%d",
+    ESP_LOGI(TAG, "loaded: auto=%d hold=%us range=%u..%ucm hyst=%ucm psrc=%u restore=%d last_on=%d",
              s_settings.auto_mode, s_settings.hold_s, s_settings.min_cm, s_settings.max_cm,
-             s_settings.restore_state, s_settings.last_on);
+             s_settings.hyst_cm, s_settings.presence_src, s_settings.restore_state, s_settings.last_on);
     return ESP_OK;
 }
 
@@ -109,6 +117,8 @@ esp_err_t app_settings_save(void)
     nvs_set_u16(h, "hold", s_settings.hold_s);
     nvs_set_u16(h, "max_cm", s_settings.max_cm);
     nvs_set_u16(h, "min_cm", s_settings.min_cm);
+    nvs_set_u16(h, "hyst_cm", s_settings.hyst_cm);
+    nvs_set_u8(h, "psrc", s_settings.presence_src);
     nvs_set_u8(h, "restore", s_settings.restore_state ? 1 : 0);
     nvs_set_u8(h, "last_on", s_settings.last_on ? 1 : 0);
     err = nvs_commit(h);

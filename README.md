@@ -226,7 +226,7 @@ czas podtrzymania, okno odległości (`min_cm`/`max_cm`), zakres bramek i progi
 |---|---|---|---|
 | GET | `/api/status` | – | pełny stan (światło, obecność, czujnik, IP, heap) |
 | POST | `/api/light` | `{"on":true}` / `{"toggle":true}` | sterowanie żarówką |
-| POST | `/api/config` | `{"auto_mode":true,"hold_s":60,"max_cm":400,"min_cm":0,"restore_state":false}` | ustawienia aplikacji (NVS) |
+| POST | `/api/config` | `{"auto_mode":true,"hold_s":60,"max_cm":400,"min_cm":0,"hyst_cm":30,"presence_src":"distance","restore_state":false}` | ustawienia aplikacji (NVS) |
 | POST | `/api/sensor` | `{"min_gate":1,"max_gate":6,"timeout_s":30}` | zakres i timeout modułu |
 | POST | `/api/sensor` | `{"gate":3,"move":250,"still":200}` | progi jednej bramki |
 | POST | `/api/sensor` | `{"mode":"energy"\|"simple"}` | tryb wyjścia modułu |
@@ -272,10 +272,31 @@ tak samo jak odcięcie prądu. Opcje: `CONFIG_APP_POWER_CYCLE_*`.
 
 ### 4.5 Kalibracja czujnika
 
+**Skąd bierze się obecność.** LD2420 wystawia w ramce flagę obecności i odległość celu.
+Na wielu egzemplarzach ta flaga siedzi na stałe na `1`, bo reaguje też na ściany i meble
+(sprawdzone na tym module — patrz `sensor.raw_presence` w `/api/status`). Dlatego
+domyślnie obecność wyliczana jest **z odległości**, a flaga jest ignorowana:
+
+| `presence_src` | Znaczenie |
+|---|---|
+| `distance` (domyślne) | obecność = cel w oknie `min_cm`…`max_cm`; wymaga `max_cm > 0` (przy `0` firmware wraca do flagi) |
+| `and` | flaga modułu **oraz** okno odległości |
+| `flag` | tylko flaga modułu (dla egzemplarzy, na których działa) |
+
+**Histereza** (`hyst_cm`, domyślnie 30 cm) zapobiega migotaniu na granicy okna: obecność
+włącza się przy `max_cm`, a wyłącza dopiero powyżej `max_cm + hyst_cm`. Przykład dla
+`max_cm=50`, `hyst_cm=30`: wejście przy ≤ 50 cm, wyjście przy > 80 cm.
+
+**Czas gaszenia** to suma dwóch opóźnień: `timeout` modułu (fabrycznie 120 s, tu ustawione
+30 s — widoczne w panelu) oraz `hold_s` naszej automatyki. Przy trybie `distance` liczy się
+praktycznie tylko `hold_s`, bo decyduje odległość, a nie flaga z timeoutem modułu.
+
+Kolejność regulacji:
+
 1. `max_gate` ustawić tak, by ściana/korytarz nie łapały (bramka ≈ 0,7 m).
 2. Dla bramek dających fałszywe wyzwolenia podnieść progi `ruch`/`spoczynek`
    (energie bieżące widać w tabeli w panelu).
-3. Dodatkowy filtr aplikacyjny: `max_cm` / `min_cm` w `/api/config`.
+3. Okno `min_cm` / `max_cm` + `hyst_cm` dobrać do miejsca montażu.
 4. Powrót do wartości fabrycznych modułu: `{"action":"factory_reset"}`.
 
 ---

@@ -17,11 +17,22 @@ extern "C" {
 
 /* ------------------------------------------------------------------ settings */
 
+/* Where the occupancy decision comes from. The presence flag of some LD2420 units is
+ * stuck at 1 (it only reflects "radar sees something", including walls and furniture),
+ * so deriving occupancy from the reported distance is usually more reliable. */
+typedef enum {
+    PRESENCE_SRC_AND = 0,      /* flaga modułu AND okno odległości (domyślne) */
+    PRESENCE_SRC_DISTANCE = 1, /* tylko okno odległości, flaga ignorowana     */
+    PRESENCE_SRC_FLAG = 2,     /* tylko flaga modułu                          */
+} presence_src_t;
+
 typedef struct {
     bool auto_mode;       /* presence automation on/off                        */
     uint16_t hold_s;      /* keep the lamp on for N s after presence is lost   */
     uint16_t max_cm;      /* ignore targets further away than this (0 = off)   */
     uint16_t min_cm;      /* ignore targets closer than this                   */
+    uint16_t hyst_cm;     /* hysteresis around the distance window            */
+    uint8_t presence_src; /* presence_src_t                                    */
     bool restore_state;   /* restore lamp state after reboot                   */
     bool last_on;         /* last known lamp state (persisted)                 */
 } app_settings_t;
