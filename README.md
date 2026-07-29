@@ -66,7 +66,14 @@ Jeśli czujnik ma starszy firmware (< 1.5.4), pracuje na 256000 baud — trzeba 
   G       ────────────────► GND (obie strony)   GND ──────────► GND ◄─── GND 5 V
 ```
 
-- Cewka przekaźnika: `VCC` → **5 V**, `GND` → masa. Pobiera ~70–80 mA, **nie zasilać z 3,3 V**.
+- Cewka przekaźnika: `VCC` → **5 V bezpośrednio** (nie przez kanał konwertera — to
+  sygnałowy MOSFET, nie udźwignie cewki). Pobiera ~70–80 mA, **nie zasilać z 3,3 V**.
+- Szynę `HV` konwertera też podłącz do **5 V**. Bez tego stan wysoki na `IN` powstaje
+  tylko przez złącze baza-emiter tranzystora w module (który zaczyna przewodzić już przy
+  ~4,4 V) — działa, ale bez zapasu i zależnie od egzemplarza modułu. Pull-up 10 kΩ do
+  `HV` wymusza pełne 5 V.
+- `GND`: oba piny masy konwertera to na tych płytkach ta sama masa, więc wystarczy jedno
+  połączenie do masy wspólnej.
 - Poziomy: GPIO10 nisko = przekaźnik załączony (żarówka świeci), wysoko = rozwarty.
 
 **Dlaczego konwerter jest tu potrzebny:** moduły wyzwalane stanem niskim mają zwykle
@@ -79,6 +86,11 @@ Jeśli zmierzysz, że twój egzemplarz modułu poprawnie wyłącza się przy 3,3
 można pominąć — ale to trzeba **zmierzyć**, nie założyć. Warianty bez konwertera: §2.3a.
 
 ### 2.3a Warianty bez konwertera poziomów
+
+> **Wynik testu na tym egzemplarzu (2026-07-29):** wariant A **nie działa** — przy
+> `GPIO10` podłączonym wprost do `IN` przekaźnik załączał się i zostawał załączony
+> (3,3 V nie zatyka tranzystora PNP). Docelowe podłączenie to konwerter z §2.3.
+> Wariant A zostaje tu opisany tylko dla innych modułów przekaźnika.
 
 **Wariant A — GPIO wprost na `IN` (najprostszy, wymaga testu)**
 

@@ -37,14 +37,16 @@ Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3 na COM5, sieć `192.168.8.12
 | Zapis ustawień do NVS | `POST /api/config {"hold_s":90,"max_cm":350}` → odczyt zwraca te wartości |
 | Wymuszenie ON po 2 szybkich odcięciach zasilania | `W light: 2 power cycles detected - forcing the lamp ON`, `lamp ON (source: power_cycle)` |
 | Sterownik LD2420 — brak czujnika nie blokuje bootu | `W ld2420: sensor not responding on UART1 (rx=4 tx=5), retrying in 30 s` |
+| Przekaźnik przez konwerter poziomów (test właściciela, 2026-07-29, ESP z powerbanka) | działa: `NO`–`COM` = 0 Ω przy ON, rozwarte przy OFF |
+| Przekaźnik `GPIO10` **wprost** na `IN` (wariant A) | **nie działa** — przekaźnik załącza się i zostaje załączony (3,3 V nie zatyka PNP) |
 | Skrypty build (WSL) / flash + monitor (Windows) | działają, patrz §5 |
 
 **Niezweryfikowane** (wymaga podłączonego sprzętu / kontrolera Matter):
 
-- faktyczne przełączanie przekaźnika i poziomy logiczne (konwerter albo wariant bez niego),
+- przekaźnik sterowany z firmware (dotychczasowy test właściciela był na samym module,
+  bez sprawdzania `POST /api/light` i stanu po resecie),
 - komunikacja UART z LD2420 (odczyt wersji FW, energii bramek, zapis progów),
 - commissioning Matter i synchronizacja OnOff apka ↔ panel.
-
 ### Matter — stan na 2026-07-28 (wstrzymane przez właściciela)
 
 Parowanie odłożone; właściciel chce najpierw uruchomić żarówkę + czujnik + panel.
