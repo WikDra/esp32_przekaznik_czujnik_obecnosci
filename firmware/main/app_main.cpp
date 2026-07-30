@@ -9,6 +9,7 @@
  * Wi-Fi network provisioned by the Matter controller.
  */
 #include "app_priv.h"
+#include "app_sun.h"
 #include "ld2420.h"
 
 #include <esp_err.h>
@@ -55,6 +56,7 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
         ESP_LOGI(TAG, "IP address assigned - starting HTTP panel");
         app_net_connected = true;
         app_web_start();
+        app_sun_start();
         break;
 
     case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
@@ -116,6 +118,7 @@ extern "C" void app_main()
     esp_log_level_set("esp_matter_attribute", ESP_LOG_WARN);
 
     ESP_ERROR_CHECK(app_settings_init());
+    ESP_ERROR_CHECK(app_sun_init());
     ESP_ERROR_CHECK(app_light_init());
 
     /* --- Matter data model --- */

@@ -6,6 +6,7 @@
 #include <nvs_flash.h>
 #include <sdkconfig.h>
 #include <string.h>
+#include <sys/param.h>
 
 static const char *TAG = "settings";
 static const char *NVS_NS = "swiatlo";
@@ -30,6 +31,18 @@ static void load_defaults(void)
     s_settings.restore_state = false;
 #endif
     s_settings.last_on = false;
+
+#ifdef CONFIG_APP_NIGHT_ONLY_DEFAULT
+    s_settings.night_only = true;
+#else
+    s_settings.night_only = false;
+#endif
+    s_settings.sunset_off_min = CONFIG_APP_SUNSET_OFFSET_MIN_DEFAULT;
+    s_settings.sunrise_off_min = CONFIG_APP_SUNRISE_OFFSET_MIN_DEFAULT;
+    s_settings.lat_udeg = CONFIG_APP_LATITUDE_UDEG_DEFAULT;
+    s_settings.lon_udeg = CONFIG_APP_LONGITUDE_UDEG_DEFAULT;
+    strlcpy(s_settings.tz, CONFIG_APP_TZ_DEFAULT, sizeof(s_settings.tz));
+    strlcpy(s_settings.ntp_server, CONFIG_APP_NTP_SERVER_DEFAULT, sizeof(s_settings.ntp_server));
 }
 
 esp_err_t app_settings_init(void)
@@ -69,6 +82,28 @@ esp_err_t app_settings_init(void)
     if (nvs_get_u8(h, "last_on", &u8) == ESP_OK) {
         s_settings.last_on = u8 != 0;
     }
+
+    if (nvs_get_u8(h, "night", &u8) == ESP_OK) {
+        s_settings.night_only = u8 != 0;
+    }
+    int16_t i16;
+    if (nvs_get_i16(h, "set_off", &i16) == ESP_OK) {
+        s_settings.sunset_off_min = i16;
+    }
+    if (nvs_get_i16(h, "rise_off", &i16) == ESP_OK) {
+        s_settings.sunrise_off_min = i16;
+    }
+    int32_t i32;
+    if (nvs_get_i32(h, "lat", &i32) == ESP_OK) {
+        s_settings.lat_udeg = i32;
+    }
+    if (nvs_get_i32(h, "lon", &i32) == ESP_OK) {
+        s_settings.lon_udeg = i32;
+    }
+    size_t len = sizeof(s_settings.tz);
+    nvs_get_str(h, "tz", s_settings.tz, &len);
+    len = sizeof(s_settings.ntp_server);
+    nvs_get_str(h, "ntp", s_settings.ntp_server, &len);
     nvs_close(h);
 
     ESP_LOGI(TAG, "loaded: auto=%d hold=%us range=%u..%ucm hyst=%ucm psrc=%u restore=%d last_on=%d",
@@ -121,6 +156,13 @@ esp_err_t app_settings_save(void)
     nvs_set_u8(h, "psrc", s_settings.presence_src);
     nvs_set_u8(h, "restore", s_settings.restore_state ? 1 : 0);
     nvs_set_u8(h, "last_on", s_settings.last_on ? 1 : 0);
+    nvs_set_u8(h, "night", s_settings.night_only ? 1 : 0);
+    nvs_set_i16(h, "set_off", s_settings.sunset_off_min);
+    nvs_set_i16(h, "rise_off", s_settings.sunrise_off_min);
+    nvs_set_i32(h, "lat", s_settings.lat_udeg);
+    nvs_set_i32(h, "lon", s_settings.lon_udeg);
+    nvs_set_str(h, "tz", s_settings.tz);
+    nvs_set_str(h, "ntp", s_settings.ntp_server);
     err = nvs_commit(h);
     nvs_close(h);
     return err;

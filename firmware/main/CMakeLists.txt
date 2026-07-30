@@ -1,6 +1,7 @@
 idf_component_register(SRCS      "app_main.cpp"
                                 "app_settings.cpp"
                                 "app_light.cpp"
+                                "app_sun.cpp"
                                 "app_web.cpp"
                                 "ld2420.cpp"
                       INCLUDE_DIRS "."

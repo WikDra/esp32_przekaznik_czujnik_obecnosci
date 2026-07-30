@@ -40,6 +40,7 @@ Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3 na COM5, sieć `192.168.8.12
 | **LD2420 po UART** (log urządzenia, 2026-07-29) | `ld2420: firmware v1.6.1`, `config: min_gate=0 max_gate=12 timeout=30s`, `sensor ready (mode=energy)` |
 | **Obecność z odległości + histereza** (`presence_src=distance`, `hyst_cm=30`) | zweryfikowane na żywo przy `max_cm=50`: wejście `dist=14/46` → `presence=true`, trzymanie przy `dist=74` (≤ 50+30), wyjście przy `dist=110`, brak wejścia przy `dist=52` |
 | **Atrybucja źródła zmiany** | naprawione i wgrane: `src=web` po `POST /api/light`, `src=auto` przy automatyce (wcześniej zawsze `matter`) |
+| **Czas z sieci (SNTP) + wschód/zachód** | `sun: timezone set to 'CET-1CEST,M3.5.0,M10.5.0/3'`, `sun: SNTP client started (server pool.ntp.org)`, `sun: time synchronized: 2026-07-30 11:12:03`; wyliczone dla Warszawy 30.07: wschód 04:53, zachód 20:31, okno nocy 20:01–05:23, `is_night=false` o 11:12 (zgodne z rzeczywistością ±2 min) |
 | **Automatyka end-to-end: radar → filtr → przekaźnik** | działa: przy `max_cm=50`, `hold_s=1` wejście w promień < 50 cm przełącza przekaźnik, wyjście gasi |
 | Przekaźnik przez konwerter poziomów (test właściciela, 2026-07-29, ESP z powerbanka) | działa: `NO`–`COM` = 0 Ω przy ON, rozwarte przy OFF |
 | Przekaźnik `GPIO10` **wprost** na `IN` (wariant A) | **nie działa** — przekaźnik załącza się i zostaje załączony (3,3 V nie zatyka PNP) |
@@ -49,7 +50,20 @@ Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3 na COM5, sieć `192.168.8.12
 
 - commissioning Matter i synchronizacja OnOff apka ↔ panel (odłożone, patrz niżej),
 - praca z oprawą 230 V i długi test stabilności (24 h),
-- zachowanie przekaźnika po zaniku zasilania i po resecie z podłączoną oprawą.
+- zachowanie przekaźnika po zaniku zasilania i po resecie z podłączoną oprawą,
+- **blokada dzienna w akcji**: `is_night` liczy się poprawnie, ale nie udało się wywołać
+  zbocza obecności w dzień przy pustym pomieszczeniu (moduł zgłasza wtedy `dist=0`).
+  Test: włączyć `night_only`, wejść w promień czujnika w dzień — lampa ma **nie** zapalić,
+  a w logu ma pojawić się `presence detected but it is daytime (night_only)`.
+
+### Flaga obecności LD2420 — sprostowanie (2026-07-30)
+
+Wcześniejsze założenie „flaga zawsze `1`” **nie jest już prawdziwe** po tym, jak właściciel
+podniósł progi bramek. Przy pustym polu widzenia moduł zgłasza teraz `raw_presence=0`
+i `raw_distance_cm=0` (energie bramek 0–1 ≈ 14 000/3 500 przy progach 60 000/30 000,
+bramki 2+ przy zerze). Wniosek: tryb `and` (flaga **oraz** okno odległości) jest
+bezpieczniejszy niż `distance`, bo wymaga obu warunków. Domyślnie zostało `distance`
+(`CONFIG_APP_PRESENCE_SRC_DEFAULT=1`) — do decyzji właściciela.
 
 ### Kalibracja i źródło obecności — stan na 2026-07-29
 
@@ -252,6 +266,7 @@ firmware/
     app_main.cpp                  # Matter: node, endpointy, callbacki, start
     app_light.cpp                 # przekaźnik, LED, przycisk, automatyka obecności
     app_settings.cpp              # ustawienia w NVS (namespace "swiatlo")
+    app_sun.cpp/.h                # SNTP, strefa czasowa, wschód/zachód, tryb nocny
     ld2420.cpp/.h                 # sterownik czujnika (UART, tryb energy/simple, progi)
     app_web.cpp                   # serwer HTTP + REST + Basic Auth
     www/index.html                # panel (wbudowany w firmware przez EMBED_FILES)
@@ -294,7 +309,7 @@ Sekwencja startowa ustawia atrybut Matter OnOff na **rzeczywisty** stan przekaź
 | Metoda | Ścieżka | Body | Opis |
 |---|---|---|---|
 | GET | `/` | – | panel HTML |
-| GET | `/api/status` | – | pełny stan: światło, obecność, dystans, ustawienia, czujnik (bramki, progi), IP, heap |
+| GET | `/api/status` | – | pełny stan: światło, obecność, dystans, ustawienia, czujnik (bramki, progi), czas i słońce, IP, heap |
 | POST | `/api/light` | `{"on":true}` / `{"toggle":true}` | sterowanie żarówką |
 | POST | `/api/config` | `{"auto_mode":true,"hold_s":60,"max_cm":400,"min_cm":0,"hyst_cm":30,"presence_src":"distance","restore_state":false}` | ustawienia aplikacji (NVS) |
 | POST | `/api/sensor` | `{"min_gate":1,"max_gate":6,"timeout_s":30}` | zakres i timeout modułu |

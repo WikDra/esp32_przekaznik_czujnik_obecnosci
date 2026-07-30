@@ -7,6 +7,7 @@
  * the internet.
  */
 #include "app_priv.h"
+#include "app_sun.h"
 #include "ld2420.h"
 
 #include <esp_err.h>
@@ -17,6 +18,7 @@
 #include <esp_timer.h>
 #include <sdkconfig.h>
 #include <string.h>
+#include <time.h>
 
 #include <cJSON.h>
 #include <mbedtls/base64.h>
@@ -198,6 +200,42 @@ static esp_err_t status_get_handler(httpd_req_t *req)
                             : cfg->presence_src == PRESENCE_SRC_FLAG   ? "flag"
                                                                       : "and");
     cJSON_AddBoolToObject(config, "restore_state", cfg->restore_state);
+    cJSON_AddBoolToObject(config, "night_only", cfg->night_only);
+    cJSON_AddNumberToObject(config, "sunset_off_min", cfg->sunset_off_min);
+    cJSON_AddNumberToObject(config, "sunrise_off_min", cfg->sunrise_off_min);
+    cJSON_AddNumberToObject(config, "lat", (double)cfg->lat_udeg / 1000000.0);
+    cJSON_AddNumberToObject(config, "lon", (double)cfg->lon_udeg / 1000000.0);
+    cJSON_AddStringToObject(config, "tz", cfg->tz);
+    cJSON_AddStringToObject(config, "ntp_server", cfg->ntp_server);
+
+    app_sun_state_t sun;
+    app_sun_get(&sun);
+    cJSON *time_obj = cJSON_AddObjectToObject(root, "time");
+    cJSON_AddBoolToObject(time_obj, "synced", sun.time_valid);
+    cJSON_AddBoolToObject(time_obj, "is_night", sun.is_night);
+    cJSON_AddBoolToObject(time_obj, "polar_day", sun.polar_day);
+    cJSON_AddBoolToObject(time_obj, "polar_night", sun.polar_night);
+    if (sun.time_valid) {
+        char buf[32];
+        struct tm tm_local;
+        localtime_r(&sun.now, &tm_local);
+        strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm_local);
+        cJSON_AddStringToObject(time_obj, "local", buf);
+        if (!sun.polar_day && !sun.polar_night) {
+            localtime_r(&sun.sunrise, &tm_local);
+            strftime(buf, sizeof(buf), "%H:%M", &tm_local);
+            cJSON_AddStringToObject(time_obj, "sunrise", buf);
+            localtime_r(&sun.sunset, &tm_local);
+            strftime(buf, sizeof(buf), "%H:%M", &tm_local);
+            cJSON_AddStringToObject(time_obj, "sunset", buf);
+            localtime_r(&sun.night_to, &tm_local);
+            strftime(buf, sizeof(buf), "%H:%M", &tm_local);
+            cJSON_AddStringToObject(time_obj, "night_to", buf);
+            localtime_r(&sun.night_from, &tm_local);
+            strftime(buf, sizeof(buf), "%H:%M", &tm_local);
+            cJSON_AddStringToObject(time_obj, "night_from", buf);
+        }
+    }
 
     cJSON *sensor = cJSON_AddObjectToObject(root, "sensor");
     cJSON_AddBoolToObject(sensor, "link_ok", st.link_ok);
@@ -279,6 +317,38 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     if (json_get_bool(body, "restore_state", &b)) {
         cfg->restore_state = b;
     }
+    if (json_get_bool(body, "night_only", &b)) {
+        cfg->night_only = b;
+    }
+
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(body, "sunset_off_min");
+    if (cJSON_IsNumber(item) && item->valuedouble >= -180 && item->valuedouble <= 180) {
+        cfg->sunset_off_min = (int16_t)item->valuedouble;
+    }
+    item = cJSON_GetObjectItemCaseSensitive(body, "sunrise_off_min");
+    if (cJSON_IsNumber(item) && item->valuedouble >= -180 && item->valuedouble <= 180) {
+        cfg->sunrise_off_min = (int16_t)item->valuedouble;
+    }
+    item = cJSON_GetObjectItemCaseSensitive(body, "lat");
+    if (cJSON_IsNumber(item) && item->valuedouble >= -90.0 && item->valuedouble <= 90.0) {
+        cfg->lat_udeg = (int32_t)(item->valuedouble * 1000000.0);
+    }
+    item = cJSON_GetObjectItemCaseSensitive(body, "lon");
+    if (cJSON_IsNumber(item) && item->valuedouble >= -180.0 && item->valuedouble <= 180.0) {
+        cfg->lon_udeg = (int32_t)(item->valuedouble * 1000000.0);
+    }
+
+    bool tz_changed = false;
+    item = cJSON_GetObjectItemCaseSensitive(body, "tz");
+    if (cJSON_IsString(item) && item->valuestring && strlen(item->valuestring) < sizeof(cfg->tz)) {
+        strlcpy(cfg->tz, item->valuestring, sizeof(cfg->tz));
+        tz_changed = true;
+    }
+    item = cJSON_GetObjectItemCaseSensitive(body, "ntp_server");
+    if (cJSON_IsString(item) && item->valuestring && strlen(item->valuestring) < sizeof(cfg->ntp_server)) {
+        strlcpy(cfg->ntp_server, item->valuestring, sizeof(cfg->ntp_server));
+        /* Zmiana serwera SNTP wymaga restartu ESP - klient startuje raz, przy pierwszym IP. */
+    }
     if (json_get_uint(body, "hold_s", 3600, &u)) {
         cfg->hold_s = (uint16_t)u;
     }
@@ -308,6 +378,10 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     }
     cJSON_Delete(body);
 
+    if (tz_changed) {
+        app_sun_apply_timezone();
+    }
+
     esp_err_t err = app_settings_save();
     cJSON *root = cJSON_CreateObject();
     cJSON_AddBoolToObject(root, "ok", err == ESP_OK);
@@ -318,6 +392,13 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "hyst_cm", cfg->hyst_cm);
     cJSON_AddNumberToObject(root, "presence_src", cfg->presence_src);
     cJSON_AddBoolToObject(root, "restore_state", cfg->restore_state);
+    cJSON_AddBoolToObject(root, "night_only", cfg->night_only);
+    cJSON_AddNumberToObject(root, "sunset_off_min", cfg->sunset_off_min);
+    cJSON_AddNumberToObject(root, "sunrise_off_min", cfg->sunrise_off_min);
+    cJSON_AddNumberToObject(root, "lat", (double)cfg->lat_udeg / 1000000.0);
+    cJSON_AddNumberToObject(root, "lon", (double)cfg->lon_udeg / 1000000.0);
+    cJSON_AddStringToObject(root, "tz", cfg->tz);
+    cJSON_AddStringToObject(root, "ntp_server", cfg->ntp_server);
     return send_json(req, root, err == ESP_OK ? 200 : 500);
 }
 

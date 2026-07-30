@@ -35,6 +35,14 @@ typedef struct {
     uint8_t presence_src; /* presence_src_t                                    */
     bool restore_state;   /* restore lamp state after reboot                   */
     bool last_on;         /* last known lamp state (persisted)                 */
+    /* --- tryb nocny (zamiast czujnika zmierzchu) --- */
+    bool night_only;         /* automatyka zapala tylko po zmroku              */
+    int16_t sunset_off_min;  /* offset do zachodu (min, ujemny = wcześniej)    */
+    int16_t sunrise_off_min; /* offset do wschodu (min, dodatni = później)     */
+    int32_t lat_udeg;        /* szerokość geograficzna w mikrostopniach        */
+    int32_t lon_udeg;        /* długość geograficzna w mikrostopniach          */
+    char tz[48];             /* POSIX TZ, np. "CET-1CEST,M3.5.0,M10.5.0/3"     */
+    char ntp_server[64];     /* serwer SNTP, np. "pool.ntp.org"                */
 } app_settings_t;
 
 esp_err_t app_settings_init(void);

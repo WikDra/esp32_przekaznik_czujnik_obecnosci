@@ -4,6 +4,7 @@
  * app_light_set() so that all of them stay in sync.
  */
 #include "app_priv.h"
+#include "app_sun.h"
 #include "ld2420.h"
 
 #include <driver/gpio.h>
@@ -225,7 +226,13 @@ void app_light_on_presence(bool presence, uint16_t distance_cm)
     matter_report_occupancy(accepted);
 
     if (rising && cfg->auto_mode && !s_on) {
-        app_light_set(true, LIGHT_SRC_AUTO);
+        /* Tryb nocny zastępuje czujnik zmierzchu: w dzień automatyka nie zapala.
+         * Ręczne sterowanie (Matter, panel, przycisk) działa zawsze. */
+        if (cfg->night_only && !app_sun_is_night()) {
+            ESP_LOGI(TAG, "presence detected but it is daytime (night_only) - not switching on");
+        } else {
+            app_light_set(true, LIGHT_SRC_AUTO);
+        }
     }
 }
 

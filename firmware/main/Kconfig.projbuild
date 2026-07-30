@@ -121,6 +121,50 @@ menu "Swiatlo LD2420 - configuration"
 
     endmenu
 
+    menu "Time and dusk (no light sensor)"
+
+        config APP_NIGHT_ONLY_DEFAULT
+            bool "Only switch the lamp on after dusk by default"
+            default n
+            help
+                When enabled the presence automation ignores detections during the day.
+                Manual control (Matter, panel, button) always works.
+                Fail-safe: until the clock is synchronized the firmware treats the time
+                as night, so the automation keeps working.
+
+        config APP_NTP_SERVER_DEFAULT
+            string "SNTP server"
+            default "pool.ntp.org"
+
+        config APP_TZ_DEFAULT
+            string "POSIX timezone string"
+            default "CET-1CEST,M3.5.0,M10.5.0/3"
+            help
+                Format like in /etc/TZ. Poland: CET-1CEST,M3.5.0,M10.5.0/3
+                (offsets have inverted signs: CET-1 means UTC+1).
+
+        config APP_LATITUDE_UDEG_DEFAULT
+            int "Latitude in microdegrees (52229700 = 52.2297 N)"
+            default 52229700
+            range -90000000 90000000
+
+        config APP_LONGITUDE_UDEG_DEFAULT
+            int "Longitude in microdegrees (21012200 = 21.0122 E)"
+            default 21012200
+            range -180000000 180000000
+
+        config APP_SUNSET_OFFSET_MIN_DEFAULT
+            int "Sunset offset (minutes, negative = earlier)"
+            default -30
+            range -180 180
+
+        config APP_SUNRISE_OFFSET_MIN_DEFAULT
+            int "Sunrise offset (minutes, positive = later)"
+            default 30
+            range -180 180
+
+    endmenu
+
     menu "Power cycle override"
 
         config APP_POWER_CYCLE_FORCE_ON

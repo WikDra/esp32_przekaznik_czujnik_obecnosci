@@ -5,6 +5,8 @@ przez **Matter** (Apple Home / Google Home / Home Assistant / SmartThings) i prz
 **lokalny panel HTTP** (regulacja progów czujnika, czasu podtrzymania, tryb automatyki).
 
 - Automatyka: obecność zapala żarówkę, po utracie obecności gaśnie z opóźnieniem `hold_s`.
+- Tryb nocny bez czujnika zmierzchu: czas z internetu (SNTP) + wyliczony zachód słońca,
+  z offsetami — automatyka zapala tylko po zmroku (§4.6).
 - Panel HTTP działa od pierwszego bootu (dane Wi-Fi z `firmware/sdkconfig.local`),
   nie tylko po sparowaniu Matter.
 - Awaryjne wymuszenie ON: **dwa szybkie odcięcia zasilania** (bez sieci i bez apki).
@@ -227,6 +229,7 @@ czas podtrzymania, okno odległości (`min_cm`/`max_cm`), zakres bramek i progi
 | GET | `/api/status` | – | pełny stan (światło, obecność, czujnik, IP, heap) |
 | POST | `/api/light` | `{"on":true}` / `{"toggle":true}` | sterowanie żarówką |
 | POST | `/api/config` | `{"auto_mode":true,"hold_s":60,"max_cm":400,"min_cm":0,"hyst_cm":30,"presence_src":"distance","restore_state":false}` | ustawienia aplikacji (NVS) |
+| POST | `/api/config` | `{"night_only":true,"sunset_off_min":-30,"sunrise_off_min":30,"lat":52.2297,"lon":21.0122,"tz":"CET-1CEST,M3.5.0,M10.5.0/3","ntp_server":"pool.ntp.org"}` | tryb nocny i czas (§4.6) |
 | POST | `/api/sensor` | `{"min_gate":1,"max_gate":6,"timeout_s":30}` | zakres i timeout modułu |
 | POST | `/api/sensor` | `{"gate":3,"move":250,"still":200}` | progi jednej bramki |
 | POST | `/api/sensor` | `{"mode":"energy"\|"simple"}` | tryb wyjścia modułu |
@@ -270,7 +273,46 @@ z pominięciem automatyki — dopóki nie wyłączysz jej jawnie z Mattera, pane
 przycisku. Stan widoczny jako `force_on` w `/api/status`. Zwykły reset płytki liczy się
 tak samo jak odcięcie prądu. Opcje: `CONFIG_APP_POWER_CYCLE_*`.
 
-### 4.5 Kalibracja czujnika
+### 4.6 Tryb nocny (zamiast czujnika zmierzchu)
+
+Nie ma czujnika zmierzchu — zamiast mierzyć światło, sterownik pobiera czas z internetu
+(SNTP) i liczy wschód/zachód słońca dla podanych współrzędnych. Włączenie
+`night_only` sprawia, że **automatyka obecności zapala tylko po zmroku**; sterowanie
+ręczne (Matter, panel, przycisk) działa zawsze i o każdej porze.
+
+| Ustawienie | Znaczenie | Domyślnie |
+|---|---|---|
+| `night_only` | automatyka tylko po zmroku | `false` |
+| `sunset_off_min` | offset zachodu w minutach (− = wcześniej) | `-30` |
+| `sunrise_off_min` | offset wschodu w minutach (+ = później) | `+30` |
+| `lat` / `lon` | współrzędne w stopniach (do obliczeń słońca) | `52.2297` / `21.0122` |
+| `tz` | strefa czasowa w formacie POSIX TZ | `CET-1CEST,M3.5.0,M10.5.0/3` |
+| `ntp_server` | serwer czasu | `pool.ntp.org` |
+
+Okno nocy to `zachód + sunset_off_min` … `wschód + sunrise_off_min`. Przykład dla
+Warszawy 30 lipca: wschód 04:53, zachód 20:31, offsety −30/+30 → automatyka działa
+od **20:01** do **05:23**.
+
+Aktualny czas, obliczone godziny i to, czy sterownik uznaje teraz noc, widać w panelu
+oraz w `/api/status` w sekcji `time`:
+
+```json
+"time": { "synced": true, "local": "2026-07-30 11:12:44", "sunrise": "04:53",
+          "sunset": "20:31", "night_from": "20:01", "night_to": "05:23", "is_night": false }
+```
+
+Uwagi:
+
+- Strefa czasowa w formacie POSIX ma **odwrócone znaki** (`CET-1` oznacza UTC+1);
+  reguły zmiany czasu (`M3.5.0,M10.5.0/3`) są potrzebne, żeby lato/zima liczyło się samo.
+- Zmiana `tz`, `lat`, `lon` i offsetów działa od razu; zmiana `ntp_server` po restarcie
+  ESP (klient SNTP startuje raz, przy pierwszym adresie IP).
+- **Fail-safe:** dopóki zegar nie jest zsynchronizowany, firmware traktuje porę jako noc,
+  więc automatyka działa normalnie (lepiej zapalić w dzień niż nie zapalić w nocy).
+- Tryb nocny blokuje tylko **zapalanie** przez automatykę. Jeśli świt zastanie
+  zapaloną żarówkę, zgaśnie normalnie po utracie obecności i `hold_s`.
+
+### 4.7 Kalibracja czujnika
 
 **Skąd bierze się obecność.** LD2420 wystawia w ramce flagę obecności i odległość celu.
 Na wielu egzemplarzach ta flaga siedzi na stałe na `1`, bo reaguje też na ściany i meble

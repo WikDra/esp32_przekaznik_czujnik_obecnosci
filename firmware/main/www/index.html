@@ -72,6 +72,32 @@
 </section>
 
 <section>
+  <h2>Tryb nocny (zamiast czujnika zmierzchu)</h2>
+  <div class="row muted">
+    Czas: <span id="localtime">?</span> (<span id="synced">?</span>) ·
+    wschód <span id="sunrise">?</span> · zachód <span id="sunset">?</span> ·
+    noc od <span id="night_from">?</span> do <span id="night_to">?</span> ·
+    teraz: <span id="isnight">?</span>
+  </div>
+  <div class="row"><label for="night_only">Zapalaj automatycznie tylko po zmroku</label>
+    <input type="checkbox" id="night_only"></div>
+  <div class="row"><label for="sunset_off_min">Offset zachodu (min, − = wcześniej)</label>
+    <input type="number" id="sunset_off_min" min="-180" max="180"></div>
+  <div class="row"><label for="sunrise_off_min">Offset wschodu (min, + = później)</label>
+    <input type="number" id="sunrise_off_min" min="-180" max="180"></div>
+  <div class="row"><label for="lat">Szerokość geogr. (°N)</label>
+    <input type="number" id="lat" step="0.0001" min="-90" max="90"></div>
+  <div class="row"><label for="lon">Długość geogr. (°E)</label>
+    <input type="number" id="lon" step="0.0001" min="-180" max="180"></div>
+  <div class="row"><label for="tz">Strefa czasowa (POSIX TZ)</label>
+    <input type="text" id="tz" size="30"></div>
+  <div class="row"><label for="ntp_server">Serwer NTP</label>
+    <input type="text" id="ntp_server" size="24"></div>
+  <div class="row"><button class="primary" onclick="saveNight()">Zapisz</button>
+    <span class="muted">zmiana serwera NTP działa po restarcie ESP</span></div>
+</section>
+
+<section>
   <h2>Czujnik LD2420</h2>
   <div class="row muted">1 bramka ≈ 0,7 m. Wartości zapisywane są w pamięci modułu.</div>
   <div class="row"><label for="min_gate">Bramka min (0-15)</label>
@@ -145,10 +171,27 @@ async function refresh() {
       document.getElementById('min_cm').value = s.config.min_cm;
       document.getElementById('hyst_cm').value = s.config.hyst_cm;
       document.getElementById('presence_src').value = s.config.presence_src_name;
+      document.getElementById('night_only').checked = s.config.night_only;
+      document.getElementById('sunset_off_min').value = s.config.sunset_off_min;
+      document.getElementById('sunrise_off_min').value = s.config.sunrise_off_min;
+      document.getElementById('lat').value = s.config.lat;
+      document.getElementById('lon').value = s.config.lon;
+      document.getElementById('tz').value = s.config.tz;
+      document.getElementById('ntp_server').value = s.config.ntp_server;
       document.getElementById('min_gate').value = s.sensor.min_gate;
       document.getElementById('max_gate').value = s.sensor.max_gate;
       document.getElementById('timeout_s').value = s.sensor.timeout_s;
     }
+
+    const t = s.time || {};
+    document.getElementById('localtime').textContent = t.local || '—';
+    document.getElementById('synced').textContent = t.synced ? 'zsynchronizowany' : 'brak synchronizacji';
+    document.getElementById('sunrise').textContent = t.sunrise || '—';
+    document.getElementById('sunset').textContent = t.sunset || '—';
+    document.getElementById('night_from').textContent = t.night_from || '—';
+    document.getElementById('night_to').textContent = t.night_to || '—';
+    document.getElementById('isnight').textContent =
+      t.polar_day ? 'dzień polarny' : t.polar_night ? 'noc polarna' : (t.is_night ? 'noc' : 'dzień');
 
     const tbody = document.querySelector('#gates tbody');
     if (!editing || tbody.children.length === 0) {
@@ -191,6 +234,20 @@ async function saveConfig() {
       presence_src: document.getElementById('presence_src').value
     });
     editing = false; msg('Zapisano ustawienia automatyki'); refresh();
+  } catch (e) { msg('Błąd: ' + e.message, true); }
+}
+async function saveNight() {
+  try {
+    await api('/api/config', {
+      night_only: document.getElementById('night_only').checked,
+      sunset_off_min: num('sunset_off_min'),
+      sunrise_off_min: num('sunrise_off_min'),
+      lat: parseFloat(document.getElementById('lat').value),
+      lon: parseFloat(document.getElementById('lon').value),
+      tz: document.getElementById('tz').value,
+      ntp_server: document.getElementById('ntp_server').value
+    });
+    editing = false; msg('Zapisano ustawienia trybu nocnego'); refresh();
   } catch (e) { msg('Błąd: ' + e.message, true); }
 }
 async function saveSensor() {
