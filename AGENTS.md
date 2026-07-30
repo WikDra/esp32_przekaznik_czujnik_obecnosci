@@ -41,6 +41,8 @@ Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3 na COM5, sieć `192.168.8.12
 | **Obecność z odległości + histereza** (`presence_src=distance`, `hyst_cm=30`) | zweryfikowane na żywo przy `max_cm=50`: wejście `dist=14/46` → `presence=true`, trzymanie przy `dist=74` (≤ 50+30), wyjście przy `dist=110`, brak wejścia przy `dist=52` |
 | **Atrybucja źródła zmiany** | naprawione i wgrane: `src=web` po `POST /api/light`, `src=auto` przy automatyce (wcześniej zawsze `matter`) |
 | **Czas z sieci (SNTP) + wschód/zachód** | `sun: timezone set to 'CET-1CEST,M3.5.0,M10.5.0/3'`, `sun: SNTP client started (server pool.ntp.org)`, `sun: time synchronized: 2026-07-30 11:12:03`; wyliczone dla Warszawy 30.07: wschód 04:53, zachód 20:31, okno nocy 20:01–05:23, `is_night=false` o 11:12 (zgodne z rzeczywistością ±2 min) |
+| **Blokada dzienna (`night_only`)** | zweryfikowana w dzień na tym samym zboczu obecności (`dist=29`, `is_night=false`): przy `night_only=false` log `light: lamp ON (source: auto)`, przy `night_only=true` log `light: presence detected but it is daytime (night_only) - not switching on` i `on=false` |
+| **Heartbeat 1 Hz w sterowniku LD2420** | działa: zmiana `min_cm`/`max_cm` przelicza obecność w ~1 s bez zmiany odczytu z modułu (wcześniej callback leciał tylko przy zmianie ramki, więc zmiana ustawień nie miała efektu do ruchu celu) |
 | **Automatyka end-to-end: radar → filtr → przekaźnik** | działa: przy `max_cm=50`, `hold_s=1` wejście w promień < 50 cm przełącza przekaźnik, wyjście gasi |
 | Przekaźnik przez konwerter poziomów (test właściciela, 2026-07-29, ESP z powerbanka) | działa: `NO`–`COM` = 0 Ω przy ON, rozwarte przy OFF |
 | Przekaźnik `GPIO10` **wprost** na `IN` (wariant A) | **nie działa** — przekaźnik załącza się i zostaje załączony (3,3 V nie zatyka PNP) |
@@ -50,11 +52,7 @@ Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3 na COM5, sieć `192.168.8.12
 
 - commissioning Matter i synchronizacja OnOff apka ↔ panel (odłożone, patrz niżej),
 - praca z oprawą 230 V i długi test stabilności (24 h),
-- zachowanie przekaźnika po zaniku zasilania i po resecie z podłączoną oprawą,
-- **blokada dzienna w akcji**: `is_night` liczy się poprawnie, ale nie udało się wywołać
-  zbocza obecności w dzień przy pustym pomieszczeniu (moduł zgłasza wtedy `dist=0`).
-  Test: włączyć `night_only`, wejść w promień czujnika w dzień — lampa ma **nie** zapalić,
-  a w logu ma pojawić się `presence detected but it is daytime (night_only)`.
+- zachowanie przekaźnika po zaniku zasilania i po resecie z podłączoną oprawą.
 
 ### Flaga obecności LD2420 — sprostowanie (2026-07-30)
 
@@ -212,6 +210,14 @@ konwerter można pominąć — ale to trzeba **zmierzyć**, nie założyć.
 7. Nieszkodliwe komunikaty w logu esp-matter 1.4.2: `E chip[SVR]: Could not find endpoint
    index for endpoint 0` i `E data_model: Cluster cannot be NULL.` (wewnętrzny guard przy
    przechodzeniu listy klastrów) — pojawiają się też w oryginalnych przykładach.
+8. **Otwarcie portu COM resetuje płytkę** (natywny USB-Serial/JTAG: DTR/RTS steruje
+   resetem, a pyserial domyślnie je aktywuje). Dwa takie podglądy pod rząd wywołują
+   `APP_POWER_CYCLE_FORCE_ON` i zapalają żarówkę. `scripts/monitor.py` otwiera port
+   z `dtr=False`/`rts=False` **przed** `open()`, więc nie resetuje; do celowego resetu
+   jest `scripts/reset_monitor.py`.
+9. Wskazówka do testów automatyki: zbocze obecności można wywołać bez ruchu przed
+   radarem, zmieniając `min_cm` (np. 100 → 0). Przez `max_cm` się nie da, jeśli cel jest
+   bliżej niż `max_cm + hyst_cm` — histereza trzyma wtedy obecność.
 
 ### Sekrety i lokalna konfiguracja
 

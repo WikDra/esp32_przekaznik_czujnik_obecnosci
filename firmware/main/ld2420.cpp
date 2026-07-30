@@ -355,6 +355,7 @@ static void reader_task(void *arg)
     bool last_presence = false;
     bool has_last = false;
     uint16_t last_distance = 0;
+    int64_t last_cb_us = 0;
 
     for (;;) {
         uint8_t rx[128];
@@ -379,10 +380,15 @@ static void reader_task(void *arg)
         changed = !has_last || presence != last_presence || distance != last_distance;
         unlock();
 
-        if (changed) {
+        /* Callback przy zmianie, ale też nie rzadziej niż raz na sekundę: aplikacja
+         * musi móc przeliczyć swoje okno odległości i tryb nocny po zmianie ustawień,
+         * nawet gdy odczyty z modułu stoją w miejscu. */
+        const int64_t now_us = esp_timer_get_time();
+        if (changed || (now_us - last_cb_us) >= 1000 * 1000) {
             has_last = true;
             last_presence = presence;
             last_distance = distance;
+            last_cb_us = now_us;
             if (s_cb) {
                 s_cb(presence, distance);
             }
