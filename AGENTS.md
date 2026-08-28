@@ -44,9 +44,10 @@ Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3 na COM5, sieć `192.168.8.12
 | **Blokada dzienna (`night_only`)** | zweryfikowana w dzień na tym samym zboczu obecności (`dist=29`, `is_night=false`): przy `night_only=false` log `light: lamp ON (source: auto)`, przy `night_only=true` log `light: presence detected but it is daytime (night_only) - not switching on` i `on=false` |
 | **Heartbeat 1 Hz w sterowniku LD2420** | działa: zmiana `min_cm`/`max_cm` przelicza obecność w ~1 s bez zmiany odczytu z modułu (wcześniej callback leciał tylko przy zmianie ramki, więc zmiana ustawień nie miała efektu do ruchu celu) |
 | **Praca z 230 V** (test właściciela, 2026-08-28, zasilacz HLK) | działa |
-| **Awaryjny tryb serwisowy Wi-Fi (SoftAP)** | `POST /api/wifi {"setup_mode":true}` → restart → AP `Swiatlo-D049` widoczny w skanie z Windows, urządzenie zniknięte z LAN; po resecie wraca do trybu stacji (flaga czyszczona przy wejściu) |
-| **Dozór połączenia** | `app_wifi: connection watchdog armed (60 s)` po starcie i `disarmed` po `sta ip: …` |
-| **Zapis danych Wi-Fi z panelu** | `POST /api/wifi {"ssid":…,"password":…}` → `credentials stored, rebooting to connect` → po restarcie `wifi.ssid` zgodne, panel znów odpowiada |
+| **Awaryjny tryb serwisowy Wi-Fi (SoftAP)** | działa end-to-end (2026-08-28, test właściciela poza zasięgiem): `POST /api/wifi {"setup_mode":true}` → restart → AP `Swiatlo-D049` w skanie Windows/telefonu, panel `http://192.168.4.1/` odpowiada (GET `/` 200), `GET /api/wifi/scan` zwraca sieci posortowane po RSSI, `POST /api/wifi` zapisuje i restartuje; po resecie wraca do stacji (flaga `swiatlo/prov` czyszczona przy wejściu) |
+| **Dozór połączenia (watchdog 60 s)** | działa: `app_wifi: connection watchdog armed (60 s)` po starcie, `disarmed` po `sta ip: …`; **realna awaria** zweryfikowana 2026-08-28 — wyniesienie poza zasięg Wi-Fi → po 60 s bez IP restart do AP serwisowego (ten sam kod co `setup_mode`) |
+| **Zapis danych Wi-Fi z panelu** | działa w obu trybach: `POST /api/wifi {"ssid":…,"password":…}` → `credentials stored, rebooting to connect` → po restarcie `wifi.ssid` zgodne, panel znów odpowiada; połączenie z nową siecią zweryfikowane 2026-08-28 (zmiana sieci z panelu w AP, restart i powrót do stacji) |
+| **Panel w trybie AP + skan sieci** | `http://192.168.4.1/` + `GET /api/wifi/scan` + `POST /api/wifi` — zweryfikowane z telefonu w AP serwisowym (2026-08-28); w trybie stacji `GET /api/wifi/scan` → 400 `scan only available in Wi-Fi setup mode` (zgodnie z założeniem) |
 | **Automatyka end-to-end: radar → filtr → przekaźnik** | działa: przy `max_cm=50`, `hold_s=1` wejście w promień < 50 cm przełącza przekaźnik, wyjście gasi |
 | Przekaźnik przez konwerter poziomów (test właściciela, 2026-07-29, ESP z powerbanka) | działa: `NO`–`COM` = 0 Ω przy ON, rozwarte przy OFF |
 | Przekaźnik `GPIO10` **wprost** na `IN` (wariant A) | **nie działa** — przekaźnik załącza się i zostaje załączony (3,3 V nie zatyka PNP) |
@@ -55,10 +56,6 @@ Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3 na COM5, sieć `192.168.8.12
 **Niezweryfikowane** (wymaga podłączonego sprzętu / kontrolera Matter):
 
 - commissioning Matter i synchronizacja OnOff apka ↔ panel (odłożone, patrz niżej),
-- **panel po dołączeniu do AP serwisowego** (`http://192.168.4.1/`) — AP jest widoczny
-  w skanie, ale nikt się jeszcze do niego nie podłączył; do sprawdzenia telefonem,
-- **dozór wywołany realną awarią Wi-Fi** (sprawdzone tylko wejście na żądanie przez
-  `{"setup_mode":true}`; ścieżka „60 s bez IP” to ten sam kod, ale bez testu na żywo),
 - długi test stabilności (24 h),
 - zachowanie przekaźnika po zaniku zasilania z podłączoną oprawą.
 

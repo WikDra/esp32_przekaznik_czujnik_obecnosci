@@ -302,6 +302,12 @@ Sieć można też zmienić bez czekania na awarię: w panelu, w sekcji *Wi-Fi*, 
 Przycisk *Uruchom AP serwisowy* wchodzi w tryb serwisowy na żądanie (przydatne, gdy
 wymieniasz router i chcesz przygotować urządzenie zawczasu).
 
+> **Zweryfikowane 2026-08-28 (poza zasięgiem Wi-Fi, telefon):** dozór 60 s zadziałał —
+> wyniesienie urządzenia poza zasięg wywołało restart do AP `Swiatlo-XXXX`; panel na
+> `http://192.168.4.1/` odpowiedział, `GET /api/wifi/scan` zwrócił sieci posortowane po
+> RSSI, zmiana `POST /api/wifi {"ssid":...}` z panelu w AP połączyła z nową siecią
+> i wróciła do stacji. Ten sam kod służy wejściu na żądanie `{"setup_mode":true}`.
+
 ```bash
 # zmiana sieci (urządzenie zrestartuje się i połączy)
 curl -u admin:swiatlo -H "Content-Type: application/json" \
