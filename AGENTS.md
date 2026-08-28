@@ -43,6 +43,10 @@ Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3 na COM5, sieć `192.168.8.12
 | **Czas z sieci (SNTP) + wschód/zachód** | `sun: timezone set to 'CET-1CEST,M3.5.0,M10.5.0/3'`, `sun: SNTP client started (server pool.ntp.org)`, `sun: time synchronized: 2026-07-30 11:12:03`; wyliczone dla Warszawy 30.07: wschód 04:53, zachód 20:31, okno nocy 20:01–05:23, `is_night=false` o 11:12 (zgodne z rzeczywistością ±2 min) |
 | **Blokada dzienna (`night_only`)** | zweryfikowana w dzień na tym samym zboczu obecności (`dist=29`, `is_night=false`): przy `night_only=false` log `light: lamp ON (source: auto)`, przy `night_only=true` log `light: presence detected but it is daytime (night_only) - not switching on` i `on=false` |
 | **Heartbeat 1 Hz w sterowniku LD2420** | działa: zmiana `min_cm`/`max_cm` przelicza obecność w ~1 s bez zmiany odczytu z modułu (wcześniej callback leciał tylko przy zmianie ramki, więc zmiana ustawień nie miała efektu do ruchu celu) |
+| **Praca z 230 V** (test właściciela, 2026-08-28, zasilacz HLK) | działa |
+| **Awaryjny tryb serwisowy Wi-Fi (SoftAP)** | `POST /api/wifi {"setup_mode":true}` → restart → AP `Swiatlo-D049` widoczny w skanie z Windows, urządzenie zniknięte z LAN; po resecie wraca do trybu stacji (flaga czyszczona przy wejściu) |
+| **Dozór połączenia** | `app_wifi: connection watchdog armed (60 s)` po starcie i `disarmed` po `sta ip: …` |
+| **Zapis danych Wi-Fi z panelu** | `POST /api/wifi {"ssid":…,"password":…}` → `credentials stored, rebooting to connect` → po restarcie `wifi.ssid` zgodne, panel znów odpowiada |
 | **Automatyka end-to-end: radar → filtr → przekaźnik** | działa: przy `max_cm=50`, `hold_s=1` wejście w promień < 50 cm przełącza przekaźnik, wyjście gasi |
 | Przekaźnik przez konwerter poziomów (test właściciela, 2026-07-29, ESP z powerbanka) | działa: `NO`–`COM` = 0 Ω przy ON, rozwarte przy OFF |
 | Przekaźnik `GPIO10` **wprost** na `IN` (wariant A) | **nie działa** — przekaźnik załącza się i zostaje załączony (3,3 V nie zatyka PNP) |
@@ -51,8 +55,12 @@ Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3 na COM5, sieć `192.168.8.12
 **Niezweryfikowane** (wymaga podłączonego sprzętu / kontrolera Matter):
 
 - commissioning Matter i synchronizacja OnOff apka ↔ panel (odłożone, patrz niżej),
-- praca z oprawą 230 V i długi test stabilności (24 h),
-- zachowanie przekaźnika po zaniku zasilania i po resecie z podłączoną oprawą.
+- **panel po dołączeniu do AP serwisowego** (`http://192.168.4.1/`) — AP jest widoczny
+  w skanie, ale nikt się jeszcze do niego nie podłączył; do sprawdzenia telefonem,
+- **dozór wywołany realną awarią Wi-Fi** (sprawdzone tylko wejście na żądanie przez
+  `{"setup_mode":true}`; ścieżka „60 s bez IP” to ten sam kod, ale bez testu na żywo),
+- długi test stabilności (24 h),
+- zachowanie przekaźnika po zaniku zasilania z podłączoną oprawą.
 
 ### Flaga obecności LD2420 — sprostowanie (2026-07-30)
 
@@ -218,6 +226,18 @@ konwerter można pominąć — ale to trzeba **zmierzyć**, nie założyć.
 9. Wskazówka do testów automatyki: zbocze obecności można wywołać bez ruchu przed
    radarem, zmieniając `min_cm` (np. 100 → 0). Przez `max_cm` się nie da, jeśli cel jest
    bliżej niż `max_cm + hyst_cm` — histereza trzyma wtedy obecność.
+10. **Tag logów `wifi` jest zajęty** przez sterownik Wi-Fi z IDF — nasz moduł używa
+    `app_wifi`, inaczej filtrowanie logu tonie w komunikatach sterownika.
+11. **`scripts/monitor.py` nie pokaże logu bez resetu**: przy nieaktywnym DTR peryferium
+    USB-Serial/JTAG nie wypycha danych, a aktywacja DTR/RTS restartuje płytkę. Do logu
+    od bootu używać `scripts/reset_monitor.py`; `monitor.py` przydaje się tylko do
+    obserwacji na żywo (i to nie na każdej płytce).
+12. **SoftAP wymaga `CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y`** (było `n`). Kosztuje ~55 kB
+    flasha: aplikacja urosła do 1,71 MB przy partycji 1,875 MB (13 % wolne). Przy
+    dalszym rozwoju trzeba pilnować tego zapasu.
+13. Matter i SoftAP **nie mogą** działać jednocześnie: przy `CHIP_DEVICE_CONFIG_ENABLE_WIFI_AP=0`
+    chip wymusza `WIFI_MODE_STA` przy każdej zmianie stanu stacji (`ESP32Utils::SetAPMode`),
+    więc AP by padł. Dlatego tryb serwisowy startuje **bez** `esp_matter::start()`.
 
 ### Sekrety i lokalna konfiguracja
 
@@ -275,6 +295,7 @@ firmware/
     app_sun.cpp/.h                # SNTP, strefa czasowa, wschód/zachód, tryb nocny
     ld2420.cpp/.h                 # sterownik czujnika (UART, tryb energy/simple, progi)
     app_web.cpp                   # serwer HTTP + REST + Basic Auth
+    app_wifi.cpp/.h               # dozór połączenia, tryb serwisowy SoftAP, zapis danych Wi-Fi
     www/index.html                # panel (wbudowany w firmware przez EMBED_FILES)
 scripts/                          # build.sh, build-win.bat, flash-win.bat, monitor*.py
 zdjecia_referencyjne/             # zdjęcia sprzętu

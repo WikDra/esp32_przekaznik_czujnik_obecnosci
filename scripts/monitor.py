@@ -20,9 +20,13 @@ ser = serial.Serial()
 ser.port = port
 ser.baudrate = 115200
 ser.timeout = 0.5
-# Musi być ustawione PRZED open(), inaczej sterownik na chwilę ściągnie reset.
-ser.dtr = False
+# RTS steruje resetem (CHIP_EN), DTR bootowaniem - obie linie zostawiamy nieaktywne,
+# żeby podgląd nie restartował płytki (patrz AGENTS.md, pułapka nr 8).
+# UWAGA: przy nieaktywnym DTR peryferium USB-Serial/JTAG na tej płytce nie wypycha
+# zaległego logu - ten skrypt pokazuje więc tylko to, co urządzenie wypisze w trakcie
+# nasłuchu. Do zobaczenia logu od bootu użyj scripts/reset_monitor.py.
 ser.rts = False
+ser.dtr = False
 
 try:
     ser.open()

@@ -193,6 +193,38 @@ menu "Swiatlo LD2420 - configuration"
 
     endmenu
 
+    menu "Wi-Fi setup fallback (SoftAP)"
+
+        config APP_WIFI_FALLBACK_S
+            int "Reboot into Wi-Fi setup mode after N s without an IP (0 = never)"
+            default 60
+            range 0 600
+            help
+                The controller sits inside the fixture with no USB access, so it has to be
+                able to recover on its own after the Wi-Fi password changes. When no IP is
+                obtained within this time, the device sets a flag and reboots into setup
+                mode: Matter stays off, a SoftAP comes up and the HTTP panel is served at
+                http://192.168.4.1/ .
+
+        config APP_PROV_AP_PREFIX
+            string "Setup AP SSID prefix (suffix = last 2 bytes of MAC)"
+            default "Swiatlo"
+
+        config APP_PROV_AP_PASSWORD
+            string "Setup AP password (min 8 chars, shorter = open network)"
+            default "swiatlo123"
+
+        config APP_PROV_TIMEOUT_MIN
+            int "Leave setup mode after N minutes (0 = stay until configured)"
+            default 10
+            range 0 240
+            help
+                Guards against sitting in AP mode forever when the router was merely
+                rebooting: after the timeout the device restarts and retries the
+                configured network.
+
+    endmenu
+
     menu "HTTP panel"
 
         config APP_WEB_PORT

@@ -118,6 +118,28 @@
 </section>
 
 <section>
+  <h2>Wi-Fi</h2>
+  <div class="row muted">
+    Tryb: <span id="wifi_mode">?</span> · sieć: <span id="wifi_ssid">?</span> ·
+    AP serwisowy: <span id="wifi_ap">—</span>
+  </div>
+  <div class="row"><label for="new_ssid">Nazwa sieci (SSID)</label>
+    <input type="text" id="new_ssid" size="24" autocomplete="off"></div>
+  <div class="row"><label for="new_pass">Hasło</label>
+    <input type="password" id="new_pass" size="24" autocomplete="off"></div>
+  <div class="row">
+    <button class="primary" onclick="saveWifi()">Zapisz i połącz (restart)</button>
+    <button onclick="scanWifi()">Skanuj sieci</button>
+    <button onclick="setupMode()">Uruchom AP serwisowy</button>
+  </div>
+  <div class="row muted" id="scanlist"></div>
+  <div class="row muted">
+    Gdy urządzenie nie połączy się w ciągu minuty, samo restartuje się do trybu
+    serwisowego i rozgłasza własną sieć — panel jest wtedy pod http://192.168.4.1/
+  </div>
+</section>
+
+<section>
   <h2>Urządzenie</h2>
   <div class="row"><button onclick="reboot()">Restart ESP32</button>
     <span class="muted">Uptime: <span id="uptime">?</span> s</span></div>
@@ -193,6 +215,12 @@ async function refresh() {
     document.getElementById('isnight').textContent =
       t.polar_day ? 'dzień polarny' : t.polar_night ? 'noc polarna' : (t.is_night ? 'noc' : 'dzień');
 
+    const w = s.wifi || {};
+    document.getElementById('wifi_mode').textContent =
+      w.mode === 'setup_ap' ? 'serwisowy AP' : (w.connected ? 'stacja (połączona)' : 'stacja (łączy się)');
+    document.getElementById('wifi_ssid').textContent = w.ssid || '—';
+    document.getElementById('wifi_ap').textContent = w.ap_ssid || '—';
+
     const tbody = document.querySelector('#gates tbody');
     if (!editing || tbody.children.length === 0) {
       tbody.innerHTML = '';
@@ -266,6 +294,38 @@ async function saveGate(gate) {
 async function sensorAction(action) {
   try { await api('/api/sensor', { action }); editing = false; msg('Wykonano: ' + action); refresh(); }
   catch (e) { msg('Błąd: ' + e.message, true); }
+}
+async function saveWifi() {
+  const ssid = document.getElementById('new_ssid').value.trim();
+  if (!ssid) { msg('Podaj nazwę sieci', true); return; }
+  if (!confirm('Zapisać dane sieci "' + ssid + '" i zrestartować urządzenie?')) return;
+  try {
+    await api('/api/wifi', { ssid, password: document.getElementById('new_pass').value });
+    msg('Zapisano. Urządzenie restartuje się i łączy z nową siecią.');
+  } catch (e) { msg('Błąd: ' + e.message, true); }
+}
+async function scanWifi() {
+  try {
+    const r = await api('/api/wifi/scan');
+    const list = (r.networks || []).sort((a, b) => b.rssi - a.rssi);
+    const box = document.getElementById('scanlist');
+    box.innerHTML = list.length ? '' : 'Nie znaleziono sieci.';
+    for (const n of list) {
+      const b = document.createElement('button');
+      b.textContent = `${n.ssid} (${n.rssi} dBm${n.open ? ', otwarta' : ''})`;
+      b.style.margin = '.15rem';
+      b.onclick = () => { document.getElementById('new_ssid').value = n.ssid; editing = true; };
+      box.appendChild(b);
+    }
+    msg('Znaleziono ' + list.length + ' sieci');
+  } catch (e) { msg('Błąd: ' + e.message, true); }
+}
+async function setupMode() {
+  if (!confirm('Zrestartować do trybu serwisowego (własna sieć Wi-Fi)?')) return;
+  try {
+    await api('/api/wifi', { setup_mode: true });
+    msg('Restart do trybu serwisowego — połącz się z siecią urządzenia i wejdź na 192.168.4.1');
+  } catch (e) { msg('Błąd: ' + e.message, true); }
 }
 async function reboot() {
   if (!confirm('Zrestartować ESP32?')) return;

@@ -10,6 +10,8 @@ przez **Matter** (Apple Home / Google Home / Home Assistant / SmartThings) i prz
 - Panel HTTP działa od pierwszego bootu (dane Wi-Fi z `firmware/sdkconfig.local`),
   nie tylko po sparowaniu Matter.
 - Awaryjne wymuszenie ON: **dwa szybkie odcięcia zasilania** (bez sieci i bez apki).
+- Awaryjna konfiguracja Wi-Fi: brak połączenia przez minutę → urządzenie rozgłasza własną
+  sieć i wystawia panel pod `192.168.4.1` (§4.5). Sieć można też zmienić z panelu.
 - Przycisk BOOT: krótkie wciśnięcie = przełącz światło, ≥5 s = factory reset Matter.
 
 Notatki techniczne, stan weryfikacji i plan rozwoju: [`AGENTS.md`](AGENTS.md).
@@ -234,6 +236,9 @@ czas podtrzymania, okno odległości (`min_cm`/`max_cm`), zakres bramek i progi
 | POST | `/api/sensor` | `{"gate":3,"move":250,"still":200}` | progi jednej bramki |
 | POST | `/api/sensor` | `{"mode":"energy"\|"simple"}` | tryb wyjścia modułu |
 | POST | `/api/sensor` | `{"action":"refresh"\|"restart"\|"factory_reset"}` | operacje na module |
+| POST | `/api/wifi` | `{"ssid":"...","password":"..."}` | zapis sieci Wi-Fi + restart (§4.5) |
+| POST | `/api/wifi` | `{"setup_mode":true}` | restart do trybu serwisowego z własnym AP |
+| GET | `/api/wifi/scan` | – | lista widocznych sieci (tylko w trybie serwisowym) |
 | POST | `/api/reboot` | `{}` | restart ESP32 |
 
 ```bash
@@ -272,6 +277,46 @@ Dwa szybkie odcięcia zasilania (domyślnie 2 cykle w oknie 10 s) zapalają żar
 z pominięciem automatyki — dopóki nie wyłączysz jej jawnie z Mattera, panelu lub
 przycisku. Stan widoczny jako `force_on` w `/api/status`. Zwykły reset płytki liczy się
 tak samo jak odcięcie prądu. Opcje: `CONFIG_APP_POWER_CYCLE_*`.
+
+### 4.5 Zmiana Wi-Fi i awaryjny tryb serwisowy
+
+Sterownik siedzi w oprawie, gdzie nie ma dostępu do USB, więc musi sam wyjść z sytuacji
+„zmieniło się hasło do Wi-Fi”:
+
+1. Po starcie liczy czas do uzyskania adresu IP. Jeśli w ciągu **60 s** go nie dostanie
+   (`CONFIG_APP_WIFI_FALLBACK_S`), zapisuje flagę w NVS i restartuje się.
+2. Wstaje w **trybie serwisowym**: Matter nie startuje, za to urządzenie rozgłasza własną
+   sieć **`Swiatlo-XXXX`** (`XXXX` = dwa ostatnie bajty MAC), hasło `swiatlo123`
+   (`CONFIG_APP_PROV_AP_PASSWORD`). Panel jest wtedy pod **http://192.168.4.1/**.
+3. W panelu w sekcji *Wi-Fi* wpisujesz nową sieć (albo wybierasz ze skanu) i zapisujesz —
+   urządzenie zapisuje dane i restartuje się do normalnej pracy.
+4. Jeśli w ciągu **10 minut** (`CONFIG_APP_PROV_TIMEOUT_MIN`) nic nie wpiszesz, urządzenie
+   restartuje się i ponawia próbę z zapisaną siecią — to na wypadek, gdy router tylko się
+   restartował. Flaga trybu serwisowego jest czyszczona już przy wejściu, więc zanik
+   zasilania nigdy nie zostawi urządzenia w trybie AP na stałe.
+
+Automatyka obecności i przekaźnik działają normalnie także w trybie serwisowym
+(bez czasu z sieci sterownik traktuje porę jako noc — patrz fail-safe w §4.6).
+
+Sieć można też zmienić bez czekania na awarię: w panelu, w sekcji *Wi-Fi*, albo przez API.
+Przycisk *Uruchom AP serwisowy* wchodzi w tryb serwisowy na żądanie (przydatne, gdy
+wymieniasz router i chcesz przygotować urządzenie zawczasu).
+
+```bash
+# zmiana sieci (urządzenie zrestartuje się i połączy)
+curl -u admin:swiatlo -H "Content-Type: application/json" \
+     -d '{"ssid":"NowaSiec","password":"nowehaslo"}' http://192.168.8.127/api/wifi
+
+# wejście w tryb serwisowy na żądanie
+curl -u admin:swiatlo -H "Content-Type: application/json" \
+     -d '{"setup_mode":true}' http://192.168.8.127/api/wifi
+
+# lista widocznych sieci (tylko w trybie serwisowym)
+curl -u admin:swiatlo http://192.168.4.1/api/wifi/scan
+```
+
+Skanowanie działa tylko w trybie serwisowym — w normalnej pracy stanem stacji zarządza
+Matter i skan mógłby zerwać połączenie.
 
 ### 4.6 Tryb nocny (zamiast czujnika zmierzchu)
 

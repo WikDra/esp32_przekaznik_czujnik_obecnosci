@@ -8,6 +8,7 @@
  */
 #include "app_priv.h"
 #include "app_sun.h"
+#include "app_wifi.h"
 #include "ld2420.h"
 
 #include <esp_err.h>
@@ -266,6 +267,14 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(sys, "free_heap", esp_get_free_heap_size());
     cJSON_AddNumberToObject(sys, "uptime_s", (double)(esp_timer_get_time() / 1000000));
 
+    char sta_ssid[33];
+    app_wifi_current_ssid(sta_ssid, sizeof(sta_ssid));
+    cJSON *wifi = cJSON_AddObjectToObject(root, "wifi");
+    cJSON_AddStringToObject(wifi, "mode", app_wifi_is_prov_mode() ? "setup_ap" : "station");
+    cJSON_AddStringToObject(wifi, "ssid", sta_ssid);
+    cJSON_AddStringToObject(wifi, "ap_ssid", app_wifi_ap_ssid());
+    cJSON_AddBoolToObject(wifi, "connected", app_net_connected);
+
     return send_json(req, root, 200);
 }
 
@@ -474,6 +483,83 @@ static esp_err_t sensor_post_handler(httpd_req_t *req)
     return send_json(req, root, 200);
 }
 
+/* --- Wi-Fi: zmiana danych logowania i skan sieci (tryb serwisowy) --- */
+
+static esp_err_t wifi_post_handler(httpd_req_t *req)
+{
+    if (!check_auth(req)) {
+        return ESP_OK;
+    }
+    cJSON *body = read_json_body(req);
+    if (!body) {
+        return send_error(req, 400, "invalid json body");
+    }
+
+    /* {"setup_mode":true} - wejście w tryb serwisowy na żądanie (np. przed zmianą routera) */
+    bool setup_mode = false;
+    if (json_get_bool(body, "setup_mode", &setup_mode) && setup_mode) {
+        cJSON_Delete(body);
+        if (app_wifi_set_prov_flag(true) != ESP_OK) {
+            return send_error(req, 500, "cannot set setup flag");
+        }
+        cJSON *root = cJSON_CreateObject();
+        cJSON_AddBoolToObject(root, "ok", true);
+        cJSON_AddStringToObject(root, "info", "rebooting into Wi-Fi setup mode (SoftAP)");
+        send_json(req, root, 200);
+        app_wifi_schedule_reboot(1000);
+        return ESP_OK;
+    }
+
+    const cJSON *ssid = cJSON_GetObjectItemCaseSensitive(body, "ssid");
+    const cJSON *pass = cJSON_GetObjectItemCaseSensitive(body, "password");
+    if (!cJSON_IsString(ssid) || !ssid->valuestring || ssid->valuestring[0] == '\0') {
+        cJSON_Delete(body);
+        return send_error(req, 400, "expected {\"ssid\":\"...\",\"password\":\"...\"}");
+    }
+
+    esp_err_t err = app_wifi_set_credentials(ssid->valuestring,
+                                             cJSON_IsString(pass) ? pass->valuestring : NULL);
+    cJSON_Delete(body);
+    if (err != ESP_OK) {
+        return send_error(req, err == ESP_ERR_INVALID_ARG ? 400 : 500, esp_err_to_name(err));
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "ok", true);
+    cJSON_AddStringToObject(root, "info", "credentials stored, rebooting to connect");
+    send_json(req, root, 200);
+    app_wifi_schedule_reboot(1500);
+    return ESP_OK;
+}
+
+static esp_err_t wifi_scan_get_handler(httpd_req_t *req)
+{
+    if (!check_auth(req)) {
+        return ESP_OK;
+    }
+    app_wifi_ap_info_t list[APP_WIFI_SCAN_MAX];
+    size_t count = 0;
+    esp_err_t err = app_wifi_scan(list, APP_WIFI_SCAN_MAX, &count);
+    if (err == ESP_ERR_INVALID_STATE) {
+        return send_error(req, 400, "scan only available in Wi-Fi setup mode");
+    }
+    if (err != ESP_OK) {
+        return send_error(req, 500, esp_err_to_name(err));
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "ok", true);
+    cJSON *arr = cJSON_AddArrayToObject(root, "networks");
+    for (size_t i = 0; i < count; i++) {
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddStringToObject(item, "ssid", list[i].ssid);
+        cJSON_AddNumberToObject(item, "rssi", list[i].rssi);
+        cJSON_AddBoolToObject(item, "open", list[i].open_network);
+        cJSON_AddItemToArray(arr, item);
+    }
+    return send_json(req, root, 200);
+}
+
 static void reboot_timer_cb(void *arg)
 {
     (void)arg;
@@ -536,6 +622,8 @@ esp_err_t app_web_start(void)
         {.uri = "/api/light", .method = HTTP_POST, .handler = light_post_handler, .user_ctx = NULL},
         {.uri = "/api/config", .method = HTTP_POST, .handler = config_post_handler, .user_ctx = NULL},
         {.uri = "/api/sensor", .method = HTTP_POST, .handler = sensor_post_handler, .user_ctx = NULL},
+        {.uri = "/api/wifi", .method = HTTP_POST, .handler = wifi_post_handler, .user_ctx = NULL},
+        {.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_get_handler, .user_ctx = NULL},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_post_handler, .user_ctx = NULL},
     };
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {

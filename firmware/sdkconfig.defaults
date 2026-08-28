@@ -6,7 +6,9 @@ CONFIG_PARTITION_TABLE_OFFSET=0xC000
 
 # --- Matter transport: Wi-Fi (station) + BLE only for commissioning ---
 CONFIG_ENABLE_WIFI_STATION=y
-CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
+# SoftAP jest potrzebny do awaryjnego trybu konfiguracji Wi-Fi (app_wifi.cpp).
+# Matter nadal pracuje wyłącznie jako stacja - AP i Matter nie działają jednocześnie.
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLE_CONN_REATTEMPT=n

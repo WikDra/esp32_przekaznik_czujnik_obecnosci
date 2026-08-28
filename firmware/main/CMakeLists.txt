@@ -3,6 +3,7 @@ idf_component_register(SRCS      "app_main.cpp"
                                 "app_light.cpp"
                                 "app_sun.cpp"
                                 "app_web.cpp"
+                                "app_wifi.cpp"
                                 "ld2420.cpp"
                       INCLUDE_DIRS "."
                       EMBED_FILES "www/index.html")

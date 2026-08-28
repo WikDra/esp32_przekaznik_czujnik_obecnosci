@@ -10,6 +10,7 @@
  */
 #include "app_priv.h"
 #include "app_sun.h"
+#include "app_wifi.h"
 #include "ld2420.h"
 
 #include <esp_err.h>
@@ -55,6 +56,7 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     case chip::DeviceLayer::DeviceEventType::kInterfaceIpAddressChanged:
         ESP_LOGI(TAG, "IP address assigned - starting HTTP panel");
         app_net_connected = true;
+        app_wifi_notify_got_ip();
         app_web_start();
         app_sun_start();
         break;
@@ -121,6 +123,23 @@ extern "C" void app_main()
     ESP_ERROR_CHECK(app_sun_init());
     ESP_ERROR_CHECK(app_light_init());
 
+    /* --- tryb serwisowy Wi-Fi: bez Mattera, za to z własnym AP i panelem --- */
+    if (app_wifi_prov_requested()) {
+        ESP_LOGW(TAG, "Wi-Fi setup mode requested");
+        esp_err_t prov_err = app_wifi_prov_start();
+        if (prov_err == ESP_OK) {
+            app_web_start();
+            err = ld2420_init(app_light_on_presence);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "LD2420 init failed: %s", esp_err_to_name(err));
+            }
+            ESP_LOGW(TAG, "ready in setup mode: connect to '%s' and open http://192.168.4.1/",
+                     app_wifi_ap_ssid());
+            return;
+        }
+        ESP_LOGE(TAG, "setup mode failed (%s) - continuing normally", esp_err_to_name(prov_err));
+    }
+
     /* --- Matter data model --- */
     /* app_light_init() may already have switched the lamp on (power-cycle override),
      * and the restore-state option is applied here, so the OnOff attribute starts
@@ -160,6 +179,9 @@ extern "C" void app_main()
     ESP_ERROR_CHECK(err);
 
     app_matter_commissioned = chip::Server::GetInstance().GetFabricTable().FabricCount() != 0;
+
+    /* Dozór: brak IP w zadanym czasie => restart do trybu serwisowego z SoftAP. */
+    app_wifi_watchdog_start();
 
     if (!app_matter_commissioned) {
         /* Prints the QR code URL and the 11-digit manual pairing code. */

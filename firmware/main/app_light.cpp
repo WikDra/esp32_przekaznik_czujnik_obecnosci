@@ -5,10 +5,12 @@
  */
 #include "app_priv.h"
 #include "app_sun.h"
+#include "app_wifi.h"
 #include "ld2420.h"
 
 #include <driver/gpio.h>
 #include <esp_log.h>
+#include <esp_system.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -321,8 +323,15 @@ static void light_task(void *arg)
             int64_t held = now - press_start_us;
             press_start_us = 0;
             if (held > 5000000) {
-                ESP_LOGW(TAG, "factory reset requested from button");
-                esp_matter::factory_reset();
+                if (app_wifi_is_prov_mode()) {
+                    /* Matter nie wystartował w trybie serwisowym - factory reset stosu
+                     * nie ma sensu, więc tylko restartujemy urządzenie. */
+                    ESP_LOGW(TAG, "long press in setup mode - restarting");
+                    esp_restart();
+                } else {
+                    ESP_LOGW(TAG, "factory reset requested from button");
+                    esp_matter::factory_reset();
+                }
             } else if (held > 50000) {
                 app_light_set(!app_light_get(), LIGHT_SRC_BUTTON);
             }
