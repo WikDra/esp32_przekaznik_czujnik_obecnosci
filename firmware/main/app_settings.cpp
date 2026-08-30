@@ -24,6 +24,8 @@ static void load_defaults(void)
     s_settings.max_cm = CONFIG_APP_MAX_DISTANCE_CM_DEFAULT;
     s_settings.min_cm = CONFIG_APP_MIN_DISTANCE_CM_DEFAULT;
     s_settings.hyst_cm = CONFIG_APP_HYSTERESIS_CM_DEFAULT;
+    s_settings.blank_ms = CONFIG_APP_RELAY_BLANK_MS_DEFAULT;
+    s_settings.on_delay_ms = CONFIG_APP_PRESENCE_ON_MS_DEFAULT;
     s_settings.presence_src = CONFIG_APP_PRESENCE_SRC_DEFAULT;
 #ifdef CONFIG_APP_RESTORE_STATE_DEFAULT
     s_settings.restore_state = true;
@@ -72,6 +74,12 @@ esp_err_t app_settings_init(void)
     }
     if (nvs_get_u16(h, "hyst_cm", &u16) == ESP_OK) {
         s_settings.hyst_cm = u16;
+    }
+    if (nvs_get_u16(h, "blank_ms", &u16) == ESP_OK) {
+        s_settings.blank_ms = u16;
+    }
+    if (nvs_get_u16(h, "on_ms", &u16) == ESP_OK) {
+        s_settings.on_delay_ms = u16;
     }
     if (nvs_get_u8(h, "psrc", &u8) == ESP_OK && u8 <= PRESENCE_SRC_FLAG) {
         s_settings.presence_src = u8;
@@ -153,6 +161,8 @@ esp_err_t app_settings_save(void)
     nvs_set_u16(h, "max_cm", s_settings.max_cm);
     nvs_set_u16(h, "min_cm", s_settings.min_cm);
     nvs_set_u16(h, "hyst_cm", s_settings.hyst_cm);
+    nvs_set_u16(h, "blank_ms", s_settings.blank_ms);
+    nvs_set_u16(h, "on_ms", s_settings.on_delay_ms);
     nvs_set_u8(h, "psrc", s_settings.presence_src);
     nvs_set_u8(h, "restore", s_settings.restore_state ? 1 : 0);
     nvs_set_u8(h, "last_on", s_settings.last_on ? 1 : 0);

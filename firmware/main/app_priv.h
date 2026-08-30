@@ -32,6 +32,8 @@ typedef struct {
     uint16_t max_cm;      /* ignore targets further away than this (0 = off)   */
     uint16_t min_cm;      /* ignore targets closer than this                   */
     uint16_t hyst_cm;     /* hysteresis around the distance window            */
+    uint16_t blank_ms;    /* ignoruj zapalanie N ms po zmianie przekaźnika     */
+    uint16_t on_delay_ms; /* obecność musi się utrzymać N ms przed zapaleniem  */
     uint8_t presence_src; /* presence_src_t                                    */
     bool restore_state;   /* restore lamp state after reboot                   */
     bool last_on;         /* last known lamp state (persisted)                 */
@@ -81,6 +83,10 @@ uint32_t app_light_auto_off_in(void);
 /* True when the lamp was forced ON by the power-cycle override (automation bypassed
  * until the next explicit OFF from Matter/panel/button). */
 bool app_light_force_on(void);
+
+/* True when the automation wants to switch on but cannot yet (daytime with night_only,
+ * or the blanking window right after a relay change). */
+bool app_light_auto_pending(void);
 
 /* Endpoint ids, filled in by app_main before the stack is started. */
 extern uint16_t app_light_endpoint_id;

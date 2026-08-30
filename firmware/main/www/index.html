@@ -60,6 +60,10 @@
     <input type="number" id="min_cm" min="0" max="1000"></div>
   <div class="row"><label for="hyst_cm">Histereza okna odległości (cm)</label>
     <input type="number" id="hyst_cm" min="0" max="300"></div>
+  <div class="row"><label for="blank_ms">Wygaszenie po przełączeniu przekaźnika (ms)</label>
+    <input type="number" id="blank_ms" min="0" max="10000"></div>
+  <div class="row"><label for="on_delay_ms">Potwierdzanie obecności przed zapaleniem (ms)</label>
+    <input type="number" id="on_delay_ms" min="0" max="5000"></div>
   <div class="row"><label for="presence_src">Źródło obecności</label>
     <select id="presence_src">
       <option value="distance">odległość (flaga modułu ignorowana)</option>
@@ -140,6 +144,20 @@
 </section>
 
 <section>
+  <h2>Aktualizacja firmware (OTA)</h2>
+  <div class="row muted">
+    Wgraj plik <code>swiatlo_ld2420.bin</code> z <code>firmware/build.esp32c3/</code>.
+    Obraz idzie do zapasowej partycji, a poprzedni zostaje — trzy szybkie odcięcia
+    zasilania przywracają starą wersję.
+  </div>
+  <div class="row">
+    <input type="file" id="otafile" accept=".bin">
+    <button class="primary" onclick="uploadOta()">Wgraj i zrestartuj</button>
+  </div>
+  <div class="row muted" id="otastatus"></div>
+</section>
+
+<section>
   <h2>Urządzenie</h2>
   <div class="row"><button onclick="reboot()">Restart ESP32</button>
     <span class="muted">Uptime: <span id="uptime">?</span> s</span></div>
@@ -192,6 +210,8 @@ async function refresh() {
       document.getElementById('max_cm').value = s.config.max_cm;
       document.getElementById('min_cm').value = s.config.min_cm;
       document.getElementById('hyst_cm').value = s.config.hyst_cm;
+      document.getElementById('blank_ms').value = s.config.blank_ms;
+      document.getElementById('on_delay_ms').value = s.config.on_delay_ms;
       document.getElementById('presence_src').value = s.config.presence_src_name;
       document.getElementById('night_only').checked = s.config.night_only;
       document.getElementById('sunset_off_min').value = s.config.sunset_off_min;
@@ -259,6 +279,8 @@ async function saveConfig() {
       restore_state: document.getElementById('restore_state').checked,
       hold_s: num('hold_s'), max_cm: num('max_cm'), min_cm: num('min_cm'),
       hyst_cm: num('hyst_cm'),
+      blank_ms: num('blank_ms'),
+      on_delay_ms: num('on_delay_ms'),
       presence_src: document.getElementById('presence_src').value
     });
     editing = false; msg('Zapisano ustawienia automatyki'); refresh();
@@ -326,6 +348,25 @@ async function setupMode() {
     await api('/api/wifi', { setup_mode: true });
     msg('Restart do trybu serwisowego — połącz się z siecią urządzenia i wejdź na 192.168.4.1');
   } catch (e) { msg('Błąd: ' + e.message, true); }
+}
+async function uploadOta() {
+  const f = document.getElementById('otafile').files[0];
+  const box = document.getElementById('otastatus');
+  if (!f) { msg('Wybierz plik .bin', true); return; }
+  if (!confirm(`Wgrać ${f.name} (${(f.size / 1024).toFixed(0)} kB) i zrestartować urządzenie?`)) return;
+  box.textContent = 'Wysyłanie… nie zamykaj strony.';
+  try {
+    const res = await fetch('/api/ota', {
+      method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: f
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) throw new Error(data.error || res.status);
+    box.textContent = `Wgrano ${data.written} B do ${data.partition}. Restart…`;
+    msg('Aktualizacja wgrana, urządzenie restartuje się');
+  } catch (e) {
+    box.textContent = 'Błąd: ' + e.message;
+    msg('Błąd aktualizacji: ' + e.message, true);
+  }
 }
 async function reboot() {
   if (!confirm('Zrestartować ESP32?')) return;

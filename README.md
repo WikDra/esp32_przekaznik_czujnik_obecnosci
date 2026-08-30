@@ -363,7 +363,31 @@ Uwagi:
 - Tryb nocny blokuje tylko **zapalanie** przez automatykę. Jeśli świt zastanie
   zapaloną żarówkę, zgaśnie normalnie po utracie obecności i `hold_s`.
 
-### 4.7 Kalibracja czujnika
+### 4.8 Aktualizacja firmware przez panel (OTA)
+
+Sterownik zamknięty w oprawie nie ma dostępu do USB, więc panel przyjmuje nowy firmware
+po Wi-Fi. W sekcji *Aktualizacja firmware* wybierz plik
+`firmware/build.esp32c3/swiatlo_ld2420.bin` i zatwierdź, albo z konsoli:
+
+```bash
+curl -u admin:swiatlo --data-binary @firmware/build.esp32c3/swiatlo_ld2420.bin \
+     -H "Content-Type: application/octet-stream" http://192.168.8.127/api/ota
+```
+
+Obraz trafia do zapasowej partycji OTA, poprzedni zostaje nietknięty; po udanym zapisie
+urządzenie restartuje się do nowej wersji. Jeśli nowa wersja okaże się zła, **trzy szybkie
+odcięcia zasilania** przywracają poprzedni obraz (`CONFIG_APP_POWER_CYCLE_ROLLBACK_COUNT`).
+Uwaga: dwa odcięcia to nadal wymuszenie ON (§4.4), trzecie robi rollback.
+
+⚠️ To zwykły HTTP z Basic Auth — kto zna hasło panelu i jest w tej sieci, może wgrać
+dowolny firmware. Trzymać wyłącznie w zaufanej sieci LAN, nie wystawiać na internet.
+
+Ograniczenie: rollback w bootloaderze nie jest włączony (bootloader zmienia się tylko przy
+wgraniu po USB), więc zabezpieczeniem jest wyłącznie powyższy licznik odcięć zasilania
+realizowany przez aplikację. Obraz jest weryfikowany sumą kontrolną przed przełączeniem
+partycji, więc uszkodzony transfer nie zostanie uruchomiony.
+
+### 4.9 Kalibracja czujnika
 
 **Skąd bierze się obecność.** LD2420 wystawia w ramce flagę obecności i odległość celu.
 Na wielu egzemplarzach ta flaga siedzi na stałe na `1`, bo reaguje też na ściany i meble

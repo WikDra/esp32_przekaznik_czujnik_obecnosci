@@ -15,6 +15,8 @@
 #include <esp_http_server.h>
 #include <esp_log.h>
 #include <esp_netif.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <sdkconfig.h>
@@ -188,6 +190,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "distance_cm", app_light_distance_cm());
     cJSON_AddNumberToObject(root, "auto_off_in", app_light_auto_off_in());
     cJSON_AddBoolToObject(root, "force_on", app_light_force_on());
+    cJSON_AddBoolToObject(root, "auto_pending", app_light_auto_pending());
 
     cJSON *config = cJSON_AddObjectToObject(root, "config");
     cJSON_AddBoolToObject(config, "auto_mode", cfg->auto_mode);
@@ -195,6 +198,8 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(config, "max_cm", cfg->max_cm);
     cJSON_AddNumberToObject(config, "min_cm", cfg->min_cm);
     cJSON_AddNumberToObject(config, "hyst_cm", cfg->hyst_cm);
+    cJSON_AddNumberToObject(config, "blank_ms", cfg->blank_ms);
+    cJSON_AddNumberToObject(config, "on_delay_ms", cfg->on_delay_ms);
     cJSON_AddNumberToObject(config, "presence_src", cfg->presence_src);
     cJSON_AddStringToObject(config, "presence_src_name",
                             cfg->presence_src == PRESENCE_SRC_DISTANCE ? "distance"
@@ -370,6 +375,12 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     if (json_get_uint(body, "hyst_cm", 300, &u)) {
         cfg->hyst_cm = (uint16_t)u;
     }
+    if (json_get_uint(body, "blank_ms", 10000, &u)) {
+        cfg->blank_ms = (uint16_t)u;
+    }
+    if (json_get_uint(body, "on_delay_ms", 5000, &u)) {
+        cfg->on_delay_ms = (uint16_t)u;
+    }
     const cJSON *psrc = cJSON_GetObjectItemCaseSensitive(body, "presence_src");
     if (cJSON_IsString(psrc) && psrc->valuestring) {
         if (strcmp(psrc->valuestring, "distance") == 0) {
@@ -399,6 +410,8 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "max_cm", cfg->max_cm);
     cJSON_AddNumberToObject(root, "min_cm", cfg->min_cm);
     cJSON_AddNumberToObject(root, "hyst_cm", cfg->hyst_cm);
+    cJSON_AddNumberToObject(root, "blank_ms", cfg->blank_ms);
+    cJSON_AddNumberToObject(root, "on_delay_ms", cfg->on_delay_ms);
     cJSON_AddNumberToObject(root, "presence_src", cfg->presence_src);
     cJSON_AddBoolToObject(root, "restore_state", cfg->restore_state);
     cJSON_AddBoolToObject(root, "night_only", cfg->night_only);
@@ -560,6 +573,80 @@ static esp_err_t wifi_scan_get_handler(httpd_req_t *req)
     return send_json(req, root, 200);
 }
 
+/* --- OTA: wgranie firmware przez panel (bez USB) ---
+ *
+ * Urządzenie siedzi w oprawie, więc aktualizacja po Wi-Fi jest jedyną drogą.
+ * Ciało żądania to surowy plik .bin (nie multipart). Obraz trafia do wolnej partycji
+ * OTA, a poprzedni zostaje nienaruszony - jeśli nowy okaże się zły, trzy szybkie
+ * odcięcia zasilania przywracają poprzedni (patrz app_light.cpp).
+ *
+ * UWAGA: to zwykły HTTP z Basic Auth. Każdy, kto zna hasło panelu i ma dostęp do tej
+ * sieci, może wgrać dowolny firmware - trzymać wyłącznie w zaufanej sieci LAN.
+ */
+static esp_err_t ota_post_handler(httpd_req_t *req)
+{
+    if (!check_auth(req)) {
+        return ESP_OK;
+    }
+    if (req->content_len < 64 * 1024 || req->content_len > 4 * 1024 * 1024) {
+        return send_error(req, 400, "unexpected image size");
+    }
+
+    const esp_partition_t *target = esp_ota_get_next_update_partition(NULL);
+    if (!target) {
+        return send_error(req, 500, "no OTA partition available");
+    }
+    ESP_LOGW(TAG, "OTA started: %u bytes -> partition '%s'", (unsigned)req->content_len,
+             target->label);
+
+    esp_ota_handle_t handle = 0;
+    esp_err_t err = esp_ota_begin(target, req->content_len, &handle);
+    if (err != ESP_OK) {
+        return send_error(req, 500, esp_err_to_name(err));
+    }
+
+    char buf[1024];
+    int received = 0;
+    while (received < (int)req->content_len) {
+        int r = httpd_req_recv(req, buf, sizeof(buf));
+        if (r == HTTPD_SOCK_ERR_TIMEOUT) {
+            continue;
+        }
+        if (r <= 0) {
+            esp_ota_abort(handle);
+            ESP_LOGE(TAG, "OTA aborted: connection lost after %d bytes", received);
+            return send_error(req, 400, "connection lost");
+        }
+        err = esp_ota_write(handle, buf, r);
+        if (err != ESP_OK) {
+            esp_ota_abort(handle);
+            ESP_LOGE(TAG, "OTA write failed: %s", esp_err_to_name(err));
+            return send_error(req, 500, esp_err_to_name(err));
+        }
+        received += r;
+    }
+
+    err = esp_ota_end(handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "OTA image invalid: %s", esp_err_to_name(err));
+        return send_error(req, 400, esp_err_to_name(err));
+    }
+    err = esp_ota_set_boot_partition(target);
+    if (err != ESP_OK) {
+        return send_error(req, 500, esp_err_to_name(err));
+    }
+
+    ESP_LOGW(TAG, "OTA finished (%d bytes), booting from '%s'", received, target->label);
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "ok", true);
+    cJSON_AddNumberToObject(root, "written", received);
+    cJSON_AddStringToObject(root, "partition", target->label);
+    cJSON_AddStringToObject(root, "info", "rebooting into the new firmware");
+    send_json(req, root, 200);
+    app_wifi_schedule_reboot(1500);
+    return ESP_OK;
+}
+
 static void reboot_timer_cb(void *arg)
 {
     (void)arg;
@@ -604,11 +691,14 @@ esp_err_t app_web_start(void)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = CONFIG_APP_WEB_PORT;
-    config.max_uri_handlers = 8;
+    config.max_uri_handlers = 10;
     /* RAM on the ESP32-C3 is tight next to Matter + BLE, so keep the socket pool small. */
     config.max_open_sockets = 4;
     config.stack_size = 6144;
     config.lru_purge_enable = true;
+    /* Wgranie ~1,7 MB firmware przez Wi-Fi trwa dłużej niż domyślne 5 s. */
+    config.recv_wait_timeout = 20;
+    config.send_wait_timeout = 20;
 
     esp_err_t err = httpd_start(&s_server, &config);
     if (err != ESP_OK) {
@@ -624,6 +714,7 @@ esp_err_t app_web_start(void)
         {.uri = "/api/sensor", .method = HTTP_POST, .handler = sensor_post_handler, .user_ctx = NULL},
         {.uri = "/api/wifi", .method = HTTP_POST, .handler = wifi_post_handler, .user_ctx = NULL},
         {.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_get_handler, .user_ctx = NULL},
+        {.uri = "/api/ota", .method = HTTP_POST, .handler = ota_post_handler, .user_ctx = NULL},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_post_handler, .user_ctx = NULL},
     };
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {

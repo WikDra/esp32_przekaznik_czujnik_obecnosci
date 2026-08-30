@@ -105,6 +105,23 @@ menu "Swiatlo LD2420 - configuration"
                 Prevents the lamp from flickering when somebody stands at the edge of the
                 configured range.
 
+        config APP_RELAY_BLANK_MS_DEFAULT
+            int "Ignore automatic switch-on for N ms after a relay change"
+            default 1500
+            range 0 10000
+            help
+                Switching the lamp disturbs the radar (supply transient, LED driver, EMI),
+                which shows up as a phantom detection right after the lamp goes off - the
+                automation would then immediately switch it back on. During this window the
+                automation does not act; presence itself keeps being tracked.
+
+        config APP_PRESENCE_ON_MS_DEFAULT
+            int "Presence must persist for N ms before switching on"
+            default 300
+            range 0 5000
+            help
+                Filters single-frame false detections. Delays switch-on by this much.
+
         config APP_PRESENCE_SRC_DEFAULT
             int "Default presence source (0 = flag AND distance, 1 = distance only, 2 = flag only)"
             default 1
@@ -190,6 +207,17 @@ menu "Swiatlo LD2420 - configuration"
             range 2 60
             help
                 If the device stays powered for longer than this, the counter is cleared.
+
+        config APP_POWER_CYCLE_ROLLBACK_COUNT
+            int "Power cycles that roll back to the previous firmware (0 = disabled)"
+            depends on APP_POWER_CYCLE_FORCE_ON
+            default 3
+            range 0 6
+            help
+                Recovery path for a bad OTA update when the controller is mounted inside a
+                fixture and USB is out of reach: this many quick power cuts switch the boot
+                partition back to the other OTA image. Does nothing when the second slot
+                holds no valid image.
 
     endmenu
 

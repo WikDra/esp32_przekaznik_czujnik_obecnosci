@@ -22,7 +22,34 @@ Sterowanie z Mattera i z panelu działa równolegle: każda zmiana stanu przecho
 
 ## 2. Stan projektu
 
-Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3 na COM5, sieć `192.168.8.120`):
+### Poprawki z 2026-08-30 (zbudowane, **niewgrane** na urządzenie)
+
+Właściciel zgłosił dwa błędy po tygodniu pracy w żyrandolu (`hold_s=6`, `max_cm=250`,
+`min_cm=30`, `hyst_cm=20`, `timeout` modułu 4 s, `night_only=true`):
+
+1. **Szybkie wyjście z pokoju → światło gaśnie i natychmiast zapala się ponownie.**
+   Diagnoza: samo przełączenie przekaźnika zaburza radar (transjent zasilania, elektronika
+   oprawy, EMI), co daje fałszywą detekcję zaraz po zgaszeniu. Poprawka: okno wygaszenia
+   `blank_ms` (domyślnie 1500 ms) — po każdej zmianie stanu przekaźnika automatyka nie
+   zapala; dodatkowo `on_delay_ms` (300 ms) wymaga, by obecność utrzymała się chwilę
+   przed zapaleniem. Obecność jest w tym czasie normalnie śledzona.
+2. **Nadejście nocy przy nieprzerwanej obecności nie zapalało światła** aż do wyjścia
+   i powrotu. Diagnoza: automatyka reagowała wyłącznie na *zbocze* obecności, a blokada
+   dzienna to zbocze bezpowrotnie gubiła. Poprawka: zatrzask `s_auto_armed` — żądanie
+   zapalenia utrzymuje się, dopóki obecność trwa, i realizuje się, gdy warunki na to
+   pozwolą (zmrok, koniec okna wygaszenia). Kasuje je utrata obecności albo ręczna
+   decyzja użytkownika (Matter/panel/przycisk). Widoczne w `/api/status` jako
+   `auto_pending`.
+
+Dodatkowo: **OTA przez panel** (`POST /api/ota`, sekcja w panelu) i **rollback po trzech
+szybkich odcięciach zasilania** (`CONFIG_APP_POWER_CYCLE_ROLLBACK_COUNT=3`), bo urządzenie
+siedzi w oprawie bez dostępu do USB.
+
+⚠️ **Firmware w żyrandolu (commit `dbe09e9`) nie ma endpointu `/api/ota`** — sprawdzone,
+zwraca 404. Pierwsze wgranie tych poprawek wymaga **jednorazowego podłączenia USB**;
+kolejne aktualizacje pójdą już bezprzewodowo z panelu.
+
+Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3, sieć domowa):
 
 | Element | Status |
 |---|---|
@@ -335,7 +362,7 @@ Sekwencja startowa ustawia atrybut Matter OnOff na **rzeczywisty** stan przekaź
 | GET | `/` | – | panel HTML |
 | GET | `/api/status` | – | pełny stan: światło, obecność, dystans, ustawienia, czujnik (bramki, progi), czas i słońce, IP, heap |
 | POST | `/api/light` | `{"on":true}` / `{"toggle":true}` | sterowanie żarówką |
-| POST | `/api/config` | `{"auto_mode":true,"hold_s":60,"max_cm":400,"min_cm":0,"hyst_cm":30,"presence_src":"distance","restore_state":false}` | ustawienia aplikacji (NVS) |
+| POST | `/api/config` | `{"auto_mode":true,"hold_s":60,"max_cm":400,"min_cm":0,"hyst_cm":30,"blank_ms":1500,"on_delay_ms":300,"presence_src":"distance","restore_state":false}` | ustawienia aplikacji (NVS) |
 | POST | `/api/sensor` | `{"min_gate":1,"max_gate":6,"timeout_s":30}` | zakres i timeout modułu |
 | POST | `/api/sensor` | `{"gate":3,"move":250,"still":200}` | progi jednej bramki (1 bramka ≈ 0,7 m) |
 | POST | `/api/sensor` | `{"mode":"energy"\|"simple"}` | tryb wyjścia modułu |

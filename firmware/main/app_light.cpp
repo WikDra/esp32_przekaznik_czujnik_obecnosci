@@ -10,6 +10,8 @@
 
 #include <driver/gpio.h>
 #include <esp_log.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
@@ -40,6 +42,10 @@ static uint16_t s_distance_cm;
 static int64_t s_auto_off_at_us; /* 0 = no pending auto-off */
 static bool s_force_on;          /* power-cycle override active */
 static bool s_in_window;         /* hysteresis state of the distance window */
+static bool s_auto_armed;        /* żądanie zapalenia z automatyki czeka na spełnienie warunków */
+static bool s_day_block_logged;  /* żeby nie zaśmiecać logu w dzień */
+static int64_t s_accepted_since_us; /* od kiedy obecność jest uznana */
+static int64_t s_blank_until_us;    /* do kiedy automatyka nie zapala (po zmianie przekaźnika) */
 
 static const char *src_name(light_src_t src)
 {
@@ -109,6 +115,18 @@ void app_light_set(bool on, light_src_t src)
     s_last_src = src;
     relay_write(on);
 
+    app_settings_t *cfg = app_settings();
+
+    if (changed) {
+        /* Po każdej zmianie stanu przekaźnika automatyka na chwilę nie zapala -
+         * przełączenie oprawy widać w odczytach radaru jako fałszywą detekcję. */
+        s_blank_until_us = esp_timer_get_time() + (int64_t)cfg->blank_ms * 1000;
+    }
+    if (src == LIGHT_SRC_MATTER || src == LIGHT_SRC_WEB || src == LIGHT_SRC_BUTTON) {
+        /* Ręczna decyzja użytkownika kasuje oczekujące żądanie automatyki. */
+        s_auto_armed = false;
+    }
+
     if (src == LIGHT_SRC_POWER_CYCLE && on) {
         s_force_on = true;
     } else if (!on && (src == LIGHT_SRC_MATTER || src == LIGHT_SRC_WEB || src == LIGHT_SRC_BUTTON)) {
@@ -116,7 +134,6 @@ void app_light_set(bool on, light_src_t src)
         s_force_on = false;
     }
 
-    app_settings_t *cfg = app_settings();
     if (on && cfg->auto_mode && !s_presence && cfg->hold_s > 0 && !s_force_on) {
         s_auto_off_at_us = esp_timer_get_time() + (int64_t)cfg->hold_s * 1000000;
     } else if (!on || s_force_on) {
@@ -211,36 +228,69 @@ void app_light_on_presence(bool presence, uint16_t distance_cm)
     }
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    const int64_t now_us = esp_timer_get_time();
     bool rising = accepted && !s_presence;
     bool falling = !accepted && s_presence;
     s_presence = accepted;
     s_distance_cm = distance_cm;
+    if (rising) {
+        s_accepted_since_us = now_us;
+        /* Zatrzask: zbocze obecności zgłasza żądanie zapalenia. Nie gaśnie ono, gdy
+         * zapalenie jest chwilowo niemożliwe (dzień przy night_only, okno wygaszenia po
+         * przełączeniu przekaźnika) - dzięki temu światło zapali się, gdy tylko warunki
+         * na to pozwolą, np. o zmroku przy nieprzerwanej obecności. */
+        s_auto_armed = true;
+        s_day_block_logged = false;
+    }
+    if (falling) {
+        s_auto_armed = false;
+        s_day_block_logged = false;
+    }
     if (s_force_on) {
         s_auto_off_at_us = 0;
     } else if (falling && s_on && cfg->auto_mode) {
-        s_auto_off_at_us = cfg->hold_s > 0 ? esp_timer_get_time() + (int64_t)cfg->hold_s * 1000000
-                                           : esp_timer_get_time();
+        s_auto_off_at_us = cfg->hold_s > 0 ? now_us + (int64_t)cfg->hold_s * 1000000 : now_us;
     } else if (accepted) {
         s_auto_off_at_us = 0;
     }
+    const bool armed = s_auto_armed;
+    const int64_t accepted_since = s_accepted_since_us;
+    const int64_t blank_until = s_blank_until_us;
     xSemaphoreGive(s_lock);
 
     matter_report_occupancy(accepted);
 
-    if (rising && cfg->auto_mode && !s_on) {
-        /* Tryb nocny zastępuje czujnik zmierzchu: w dzień automatyka nie zapala.
-         * Ręczne sterowanie (Matter, panel, przycisk) działa zawsze. */
-        if (cfg->night_only && !app_sun_is_night()) {
-            ESP_LOGI(TAG, "presence detected but it is daytime (night_only) - not switching on");
-        } else {
-            app_light_set(true, LIGHT_SRC_AUTO);
-        }
+    if (!armed || !accepted || !cfg->auto_mode || s_on) {
+        return;
     }
+
+    /* Okno wygaszenia: przełączenie przekaźnika zaburza radar (transjent zasilania,
+     * układ oprawy, EMI) i bez tego filtra fałszywa ramka zaraz po zgaszeniu potrafiła
+     * natychmiast zapalić światło z powrotem. */
+    if (now_us < blank_until) {
+        return;
+    }
+    if ((now_us - accepted_since) < (int64_t)cfg->on_delay_ms * 1000) {
+        return;
+    }
+    if (cfg->night_only && !app_sun_is_night()) {
+        if (!s_day_block_logged) {
+            s_day_block_logged = true;
+            ESP_LOGI(TAG, "presence detected but it is daytime (night_only) - waiting for dusk");
+        }
+        return;
+    }
+
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_auto_armed = false;
+    xSemaphoreGive(s_lock);
+    app_light_set(true, LIGHT_SRC_AUTO);
 }
 
 bool app_light_presence(void) { return s_presence; }
 uint16_t app_light_distance_cm(void) { return s_distance_cm; }
 bool app_light_force_on(void) { return s_force_on; }
+bool app_light_auto_pending(void) { return s_auto_armed; }
 
 /* ------------------------------------------------------------ power cycle override */
 
@@ -252,22 +302,8 @@ static void power_cycle_clear_cb(void *arg)
     ESP_LOGI(TAG, "power cycle counter cleared");
 }
 
-/* Counts how many times the device was powered up (or reset) within
- * CONFIG_APP_POWER_CYCLE_WINDOW_S of each other. Reaching the configured count
- * forces the lamp ON with the automation bypassed. Returns true when triggered. */
-static bool power_cycle_check(void)
+static void start_power_cycle_clear_timer(void)
 {
-    uint8_t count = (uint8_t)(app_settings_get_power_cycles() + 1);
-    if (count >= CONFIG_APP_POWER_CYCLE_COUNT) {
-        app_settings_set_power_cycles(0);
-        ESP_LOGW(TAG, "%d power cycles detected - forcing the lamp ON", count);
-        return true;
-    }
-
-    app_settings_set_power_cycles(count);
-    ESP_LOGI(TAG, "power cycle %d/%d (cut the power again within %d s to force the lamp ON)",
-             count, CONFIG_APP_POWER_CYCLE_COUNT, CONFIG_APP_POWER_CYCLE_WINDOW_S);
-
     esp_timer_handle_t timer;
     const esp_timer_create_args_t args = {
         .callback = power_cycle_clear_cb,
@@ -279,6 +315,52 @@ static bool power_cycle_check(void)
     if (esp_timer_create(&args, &timer) == ESP_OK) {
         esp_timer_start_once(timer, (uint64_t)CONFIG_APP_POWER_CYCLE_WINDOW_S * 1000000ULL);
     }
+}
+
+/* Counts how many times the device was powered up (or reset) within
+ * CONFIG_APP_POWER_CYCLE_WINDOW_S of each other. Reaching the configured count
+ * forces the lamp ON with the automation bypassed. Returns true when triggered. */
+static bool power_cycle_check(void)
+{
+    uint8_t count = (uint8_t)(app_settings_get_power_cycles() + 1);
+
+#if CONFIG_APP_POWER_CYCLE_ROLLBACK_COUNT > 0
+    /* Ratunek po nieudanej aktualizacji OTA: urządzenie siedzi w oprawie, więc jedynym
+     * dostępnym "przyciskiem" jest wyłącznik zasilania. Tyle szybkich odcięć przywraca
+     * poprzedni obraz firmware (drugą partycję OTA). */
+    if (count >= CONFIG_APP_POWER_CYCLE_ROLLBACK_COUNT) {
+        app_settings_set_power_cycles(0);
+        const esp_partition_t *running = esp_ota_get_running_partition();
+        const esp_partition_t *previous = esp_ota_get_next_update_partition(NULL);
+        if (previous && previous != running) {
+            esp_err_t err = esp_ota_set_boot_partition(previous);
+            ESP_LOGW(TAG, "%d power cycles - rollback to '%s': %s", count, previous->label,
+                     esp_err_to_name(err));
+            if (err == ESP_OK) {
+                vTaskDelay(pdMS_TO_TICKS(200));
+                esp_restart();
+            }
+        } else {
+            ESP_LOGW(TAG, "%d power cycles but no alternative firmware image to roll back to",
+                     count);
+        }
+        return true; /* i tak zapal światło - użytkownik czegoś od nas chce */
+    }
+#endif
+
+    if (count >= CONFIG_APP_POWER_CYCLE_COUNT) {
+        /* Licznik zostaje, żeby kolejne odcięcie mogło wywołać rollback; zeruje go
+         * timer po CONFIG_APP_POWER_CYCLE_WINDOW_S sekundach pracy. */
+        app_settings_set_power_cycles(count);
+        ESP_LOGW(TAG, "%d power cycles detected - forcing the lamp ON", count);
+        start_power_cycle_clear_timer();
+        return true;
+    }
+
+    app_settings_set_power_cycles(count);
+    ESP_LOGI(TAG, "power cycle %d/%d (cut the power again within %d s to force the lamp ON)",
+             count, CONFIG_APP_POWER_CYCLE_COUNT, CONFIG_APP_POWER_CYCLE_WINDOW_S);
+    start_power_cycle_clear_timer();
     return false;
 }
 #endif
