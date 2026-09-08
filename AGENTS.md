@@ -128,6 +128,7 @@ Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3, sieć domowa):
 | **Odtwarzanie konfiguracji LD2420 po zaniku zasilania** | działa: `/api/status` pokazał `sensor.restored_writes=7` po realnym odcięciu — moduł zgubił 7 wartości, sterownik je dopisał; właściciel potwierdził, że ustawienia przestały ginąć |
 | **Zmiana hasła panelu z panelu** | działa: `POST /api/password` → nowe hasło 200, stare 401; po powrocie na poprzednie znów 200. Poświadczenia w NVS (`web_user`/`web_pass`), więc przeżywają OTA; 4 szybkie odcięcia zasilania przywracają wartości z firmware |
 | **Eksport/import ustawień (JSON)** | działa: `GET /api/settings` → 530 B z `Content-Disposition`, bez hasła i danych Wi-Fi; import ze zmienionym `hold_s` 2→5 zastosował 16 pól, powrót z kopii przywrócił `hold_s=2`, `psrc=and`, `timeout=6s`, `still[2]=70`; powtórny import bez zmian daje `sensor_writes=0` (nie zużywa pamięci modułu) |
+| **Historia wykryć (`/api/events`)** | działa: pełny cykl zapisany w kolejności od najnowszego — `light_on src=web`, `presence dist=254`, `light_off src=web`, `presence_end dist=0 duration_s=6`; czas zegarowy w każdym wpisie |
 | **Heartbeat 1 Hz w sterowniku LD2420** | działa: zmiana `min_cm`/`max_cm` przelicza obecność w ~1 s bez zmiany odczytu z modułu (wcześniej callback leciał tylko przy zmianie ramki, więc zmiana ustawień nie miała efektu do ruchu celu) |
 | **Praca z 230 V** (test właściciela, 2026-08-28, zasilacz HLK) | działa |
 | **Awaryjny tryb serwisowy Wi-Fi (SoftAP)** | działa end-to-end (2026-08-28, test właściciela poza zasięgiem): `POST /api/wifi {"setup_mode":true}` → restart → AP `Swiatlo-D049` w skanie Windows/telefonu, panel `http://192.168.4.1/` odpowiada (GET `/` 200), `GET /api/wifi/scan` zwraca sieci posortowane po RSSI, `POST /api/wifi` zapisuje i restartuje; po resecie wraca do stacji (flaga `swiatlo/prov` czyszczona przy wejściu) |
@@ -375,6 +376,7 @@ firmware/
     app_main.cpp                  # Matter: node, endpointy, callbacki, start
     app_light.cpp                 # przekaźnik, LED, przycisk, automatyka obecności
     app_settings.cpp              # ustawienia w NVS (namespace "swiatlo")
+    app_events.cpp/.h             # historia zdarzeń (bufor cykliczny w RAM)
     app_sun.cpp/.h                # SNTP, strefa czasowa, wschód/zachód, tryb nocny
     ld2420.cpp/.h                 # sterownik czujnika (UART, tryb energy/simple, progi)
     app_web.cpp                   # serwer HTTP + REST + Basic Auth
@@ -419,7 +421,8 @@ Sekwencja startowa ustawia atrybut Matter OnOff na **rzeczywisty** stan przekaź
 | Metoda | Ścieżka | Body | Opis |
 |---|---|---|---|
 | GET | `/` | – | panel HTML |
-| GET | `/api/status` | – | pełny stan: światło, obecność, dystans, ustawienia, czujnik (bramki, progi), czas i słońce, IP, heap || POST | `/api/light` | `{"on":true}` / `{"toggle":true}` | sterowanie żarówką |
+| GET | `/api/status` | – | pełny stan: światło, obecność, dystans, ustawienia, czujnik (bramki, progi), czas i słońce, IP, heap |
+| GET | `/api/events` | – | historia ostatnich zdarzeń (obecność + przełączenia lampy), bufor w RAM || POST | `/api/light` | `{"on":true}` / `{"toggle":true}` | sterowanie żarówką |
 | POST | `/api/config` | `{"auto_mode":true,"hold_s":60,"max_cm":400,"min_cm":0,"hyst_cm":30,"blank_ms":1500,"on_delay_ms":300,"presence_src":"distance","restore_state":false}` | ustawienia aplikacji (NVS) |
 | POST | `/api/sensor` | `{"min_gate":1,"max_gate":6,"timeout_s":30}` | zakres i timeout modułu |
 | POST | `/api/sensor` | `{"gate":3,"move":250,"still":200}` | progi jednej bramki (1 bramka ≈ 0,7 m) |
@@ -490,8 +493,7 @@ Kolejność wg priorytetu właściciela: **żarówka → czujnik → panel**, Ma
       rozgłaszania `_matterc._udp` / `_matter._tcp`.
 - [ ] Test zaniku Wi-Fi / restartu routera (czy panel wraca po rekonekcie — obecnie
       serwer startuje raz, przy pierwszym IP; `app_web_start()` jest idempotentne).
-- [ ] Opcjonalnie: harmonogram / blokada nocna, licznik godzin pracy, log zdarzeń.
-- [ ] Opcjonalnie: OTA (partycje już przygotowane, `CONFIG_ENABLE_OTA_REQUESTOR=y`).
+- [ ] Opcjonalnie: harmonogram / blokada nocna, licznik godzin pracy, log zdarzeń.- [ ] Opcjonalnie: OTA (partycje już przygotowane, `CONFIG_ENABLE_OTA_REQUESTOR=y`).
 - [ ] Opcjonalnie: SoftAP + portal, gdyby dane Wi-Fi miały być wpisywane bez rekompilacji.
 - [ ] Opcjonalnie: watchdog na zawieszony czujnik (obecnie po 10 s bez ramek
       `link_ok=false`, obecność wymuszana na `false`).

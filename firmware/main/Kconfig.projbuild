@@ -122,6 +122,16 @@ menu "Swiatlo LD2420 - configuration"
             help
                 Filters single-frame false detections. Delays switch-on by this much.
 
+        config APP_EVENT_LOG_SIZE
+            int "How many recent events to keep in the history"
+            default 30
+            range 5 100
+            help
+                Ring buffer with presence detections and lamp state changes, readable from
+                the panel (GET /api/events) - handy for checking in the morning whether
+                somebody actually walked in during the night. Kept in RAM, so a restart
+                clears it.
+
         config APP_PRESENCE_SRC_DEFAULT
             int "Default presence source (0 = flag AND distance, 1 = distance only, 2 = flag only)"
             default 1

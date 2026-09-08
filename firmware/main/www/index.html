@@ -144,6 +144,17 @@
 </section>
 
 <section>
+  <h2>Historia wykryć</h2>
+  <div class="row muted">
+    Ostatnie zdarzenia obecności i przełączenia lampy. Licznik od startu:
+    <span id="ev_count">?</span>. Historia jest w RAM, więc restart ją czyści.
+    <button onclick="loadEvents()">Odśwież</button>
+  </div>
+  <table id="events"><thead><tr><th>Kiedy</th><th>Zdarzenie</th><th>Odległość</th><th>Szczegóły</th></tr></thead>
+    <tbody></tbody></table>
+</section>
+
+<section>
   <h2>Hasło panelu</h2>
   <div class="row muted">
     Zmiana zapisuje się w NVS, więc przeżywa aktualizację firmware. Po zapisaniu
@@ -380,6 +391,43 @@ async function setupMode() {
     msg('Restart do trybu serwisowego — połącz się z siecią urządzenia i wejdź na 192.168.4.1');
   } catch (e) { msg('Błąd: ' + e.message, true); }
 }
+const EVENT_LABELS = {
+  presence: 'wykryto obecność',
+  presence_end: 'koniec obecności',
+  light_on: 'lampa załączona',
+  light_off: 'lampa wyłączona'
+};
+
+function eventWhen(e, nowUptime) {
+  if (e.local) { return e.local; }
+  const ago = Math.max(0, nowUptime - e.uptime_s);
+  return `${ago} s temu (bez zegara)`;
+}
+
+async function loadEvents() {
+  try {
+    const r = await api('/api/events');
+    document.getElementById('ev_count').textContent = r.presence_events;
+    const tbody = document.querySelector('#events tbody');
+    tbody.innerHTML = '';
+    if (!r.events.length) {
+      tbody.innerHTML = '<tr><td colspan="4">Brak zdarzeń od startu urządzenia.</td></tr>';
+      return;
+    }
+    for (const e of r.events) {
+      const tr = document.createElement('tr');
+      const details = [];
+      if (e.duration_s !== undefined) { details.push(`trwała ${e.duration_s} s`); }
+      if (e.src) { details.push(`źródło: ${e.src}`); }
+      tr.innerHTML = `<td>${eventWhen(e, r.uptime_s)}</td>` +
+        `<td>${EVENT_LABELS[e.type] || e.type}</td>` +
+        `<td>${e.distance_cm !== undefined ? e.distance_cm + ' cm' : '—'}</td>` +
+        `<td>${details.join(', ') || '—'}</td>`;
+      tbody.appendChild(tr);
+    }
+  } catch (e) { msg('Błąd historii: ' + e.message, true); }
+}
+
 async function changePassword() {
   const current = document.getElementById('pw_current').value;
   const pass = document.getElementById('pw_new').value;
@@ -452,7 +500,9 @@ async function reboot() {
 }
 
 refresh();
+loadEvents();
 setInterval(refresh, 2000);
+setInterval(loadEvents, 15000);
 </script>
 </body>
 </html>

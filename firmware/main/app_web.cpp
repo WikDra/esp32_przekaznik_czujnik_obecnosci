@@ -7,6 +7,7 @@
  * the internet.
  */
 #include "app_priv.h"
+#include "app_events.h"
 #include "app_sun.h"
 #include "app_wifi.h"
 #include "ld2420.h"
@@ -932,6 +933,48 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
     return send_json(req, root, 200);
 }
 
+/* --- historia ostatnich wykryć --- */
+
+static esp_err_t events_get_handler(httpd_req_t *req)
+{
+    if (!check_auth(req)) {
+        return ESP_OK;
+    }
+    static app_event_t events[CONFIG_APP_EVENT_LOG_SIZE];
+    const size_t n = app_events_get(events, CONFIG_APP_EVENT_LOG_SIZE);
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "ok", true);
+    cJSON_AddNumberToObject(root, "presence_events", app_events_presence_count());
+    cJSON_AddNumberToObject(root, "uptime_s", (double)(esp_timer_get_time() / 1000000));
+    cJSON *arr = cJSON_AddArrayToObject(root, "events");
+    for (size_t i = 0; i < n; i++) {
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddStringToObject(item, "type", app_event_type_name(events[i].type));
+        cJSON_AddNumberToObject(item, "uptime_s", events[i].uptime_s);
+        /* Czas zegarowy tylko wtedy, gdy zegar był zsynchronizowany przy zapisie. */
+        if (events[i].wall > 0) {
+            cJSON_AddNumberToObject(item, "t", (double)events[i].wall);
+            char buf[24];
+            struct tm tm_local;
+            localtime_r(&events[i].wall, &tm_local);
+            strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm_local);
+            cJSON_AddStringToObject(item, "local", buf);
+        }
+        if (events[i].type == APP_EVENT_PRESENCE_START || events[i].type == APP_EVENT_PRESENCE_END) {
+            cJSON_AddNumberToObject(item, "distance_cm", events[i].distance_cm);
+        }
+        if (events[i].type == APP_EVENT_PRESENCE_END) {
+            cJSON_AddNumberToObject(item, "duration_s", events[i].duration_s);
+        }
+        if (events[i].src[0]) {
+            cJSON_AddStringToObject(item, "src", events[i].src);
+        }
+        cJSON_AddItemToArray(arr, item);
+    }
+    return send_json(req, root, 200);
+}
+
 static void reboot_timer_cb(void *arg)
 {
     (void)arg;
@@ -994,6 +1037,7 @@ esp_err_t app_web_start(void)
     static const httpd_uri_t uris[] = {
         {.uri = "/", .method = HTTP_GET, .handler = root_get_handler, .user_ctx = NULL},
         {.uri = "/api/status", .method = HTTP_GET, .handler = status_get_handler, .user_ctx = NULL},
+        {.uri = "/api/events", .method = HTTP_GET, .handler = events_get_handler, .user_ctx = NULL},
         {.uri = "/api/light", .method = HTTP_POST, .handler = light_post_handler, .user_ctx = NULL},
         {.uri = "/api/config", .method = HTTP_POST, .handler = config_post_handler, .user_ctx = NULL},
         {.uri = "/api/sensor", .method = HTTP_POST, .handler = sensor_post_handler, .user_ctx = NULL},

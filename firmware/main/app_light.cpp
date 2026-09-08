@@ -4,6 +4,7 @@
  * app_light_set() so that all of them stay in sync.
  */
 #include "app_priv.h"
+#include "app_events.h"
 #include "app_sun.h"
 #include "app_wifi.h"
 #include "ld2420.h"
@@ -146,6 +147,7 @@ void app_light_set(bool on, light_src_t src)
     }
 
     ESP_LOGI(TAG, "lamp %s (source: %s)", on ? "ON" : "OFF", src_name(src));
+    app_events_add_light(on, src_name(src));
 
     if (src != LIGHT_SRC_MATTER) {
         matter_report_on_off(on);
@@ -246,6 +248,7 @@ void app_light_on_presence(bool presence, uint16_t distance_cm)
         s_auto_armed = false;
         s_day_block_logged = false;
     }
+    const int64_t presence_started = s_accepted_since_us;
     if (s_force_on) {
         s_auto_off_at_us = 0;
     } else if (falling && s_on && cfg->auto_mode) {
@@ -259,6 +262,13 @@ void app_light_on_presence(bool presence, uint16_t distance_cm)
     xSemaphoreGive(s_lock);
 
     matter_report_occupancy(accepted);
+
+    if (rising) {
+        app_events_add_presence(true, distance_cm, 0);
+    } else if (falling) {
+        const uint32_t held = (uint32_t)((now_us - presence_started) / 1000000);
+        app_events_add_presence(false, distance_cm, held > 65535 ? 65535 : (uint16_t)held);
+    }
 
     if (!armed || !accepted || !cfg->auto_mode || s_on) {
         return;
@@ -458,6 +468,7 @@ esp_err_t app_light_init(void)
     if (!s_lock) {
         return ESP_ERR_NO_MEM;
     }
+    app_events_init();
 
     /* Set the safe (OFF) level *before* switching the pin to output so the relay
      * cannot click during boot. */

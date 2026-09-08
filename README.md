@@ -229,6 +229,7 @@ czas podtrzymania, okno odległości (`min_cm`/`max_cm`), zakres bramek i progi
 | Metoda | Ścieżka | Body | Opis |
 |---|---|---|---|
 | GET | `/api/status` | – | pełny stan (światło, obecność, czujnik, IP, heap) |
+| GET | `/api/events` | – | historia ostatnich wykryć i przełączeń (§4.12) |
 | POST | `/api/light` | `{"on":true}` / `{"toggle":true}` | sterowanie żarówką |
 | POST | `/api/config` | `{"auto_mode":true,"hold_s":60,"max_cm":400,"min_cm":0,"hyst_cm":30,"presence_src":"distance","restore_state":false}` | ustawienia aplikacji (NVS) |
 | POST | `/api/config` | `{"night_only":true,"sunset_off_min":-30,"sunrise_off_min":30,"lat":52.2297,"lon":21.0122,"tz":"CET-1CEST,M3.5.0,M10.5.0/3","ntp_server":"pool.ntp.org"}` | tryb nocny i czas (§4.6) |
@@ -434,7 +435,34 @@ Import stosuje tylko te pola, które są w pliku, i pomija zapisy do czujnika, g
 się nie zmieniają (pamięć nieulotna modułu ma ograniczoną liczbę cykli). W odpowiedzi
 dostajesz `app_fields` i `sensor_writes` — ile pól i ile zapisów faktycznie zastosowano.
 
-### 4.11 Kalibracja czujnika
+### 4.12 Historia wykryć
+
+Sekcja *Historia wykryć* pokazuje ostatnie zdarzenia — po to, żeby rano dało się
+sprawdzić, czy ktoś w nocy naprawdę wszedł, czy czujnikowi się „przywidziało”.
+Rejestrowane są:
+
+- `presence` — obecność uznana przez automatykę (z odległością celu),
+- `presence_end` — koniec obecności (z czasem jej trwania),
+- `light_on` / `light_off` — przełączenia lampy wraz ze źródłem (`auto`, `web`, `matter`,
+  `button`, `power_cycle`).
+
+```bash
+curl -u admin:swiatlo http://192.168.1.7/api/events
+```
+
+```json
+{"ok":true,"presence_events":1,"uptime_s":300,"events":[
+  {"type":"presence_end","local":"2026-09-08 19:18:52","distance_cm":0,"duration_s":6},
+  {"type":"presence","local":"2026-09-08 19:18:46","distance_cm":254}]}
+```
+
+Bufor ma domyślnie 30 wpisów (`CONFIG_APP_EVENT_LOG_SIZE`, najnowsze pierwsze) i siedzi
+w RAM — restart urządzenia czyści historię. Zapisywanie każdego zdarzenia do NVS zużywałoby
+pamięć nieulotną bez wyraźnego zysku, a przy zaniku zasilania i tak byłoby niepełne.
+Wpisy sprzed synchronizacji zegara nie mają czasu zegarowego, tylko `uptime_s` — panel
+pokazuje je wtedy jako „N s temu”.
+
+### 4.13 Kalibracja czujnika
 
 **Skąd bierze się obecność.** LD2420 wystawia w ramce flagę obecności i odległość celu.
 Na wielu egzemplarzach ta flaga siedzi na stałe na `1`, bo reaguje też na ściany i meble
