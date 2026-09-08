@@ -22,10 +22,10 @@ Sterowanie z Mattera i z panelu działa równolegle: każda zmiana stanu przecho
 
 ## 2. Stan projektu
 
-### Poprawki z 2026-08-30 (zbudowane, **niewgrane** na urządzenie)
+### Poprawki z 2026-08-30 (wgrane i zweryfikowane 2026-09-08)
 
-Właściciel zgłosił dwa błędy po tygodniu pracy w żyrandolu (`hold_s=6`, `max_cm=250`,
-`min_cm=30`, `hyst_cm=20`, `timeout` modułu 4 s, `night_only=true`):
+Właściciel zgłosił dwa błędy po tygodniu pracy w żyrandolu (`hold_s=6`, `max_cm=265`,
+`min_cm=50`, `hyst_cm=20`, `timeout` modułu 30 s, `night_only=true`):
 
 1. **Szybkie wyjście z pokoju → światło gaśnie i natychmiast zapala się ponownie.**
    Diagnoza: samo przełączenie przekaźnika zaburza radar (transjent zasilania, elektronika
@@ -45,9 +45,22 @@ Dodatkowo: **OTA przez panel** (`POST /api/ota`, sekcja w panelu) i **rollback p
 szybkich odcięciach zasilania** (`CONFIG_APP_POWER_CYCLE_ROLLBACK_COUNT=3`), bo urządzenie
 siedzi w oprawie bez dostępu do USB.
 
-⚠️ **Firmware w żyrandolu (commit `dbe09e9`) nie ma endpointu `/api/ota`** — sprawdzone,
-zwraca 404. Pierwsze wgranie tych poprawek wymaga **jednorazowego podłączenia USB**;
-kolejne aktualizacje pójdą już bezprzewodowo z panelu.
+⚠️ **Firmware w żyrandolu (commit `dbe09e9`) nie miał endpointu `/api/ota`** — dlatego
+pierwsze wgranie tych poprawek wymagało jednorazowego podłączenia USB (2026-09-08,
+właściciel wyjął sterownik z oprawy). Od tej wersji aktualizacje idą bezprzewodowo.
+
+Weryfikacja po wgraniu (2026-09-08, sieć `192.168.1.7`):
+
+| Test | Wynik |
+|---|---|
+| Zatrzask nocny (błąd 2) | przy `night_only=true` w dzień: `presence=true`, `on=false`, `auto_pending=true`; po `{"night_only":false}` światło zapaliło się w 2 s z `src=auto` **bez** nowego zbocza obecności |
+| Okno wygaszenia (błąd 1) | przy `blank_ms=5000`: po auto-off obecność wróciła w t+1 s (`pending=true`), lampa pozostała zgaszona do t+4 s i zapaliła się w t+5 s |
+| OTA z panelu | `POST /api/ota` 1 721 856 B w **9 s** → `{"partition":"ota_1"}` → restart, `system.partition=ota_1` |
+| Rollback trzema odcięciami | po trzech szybkich resetach urządzenie wstało z `ota_0` (log: `power cycle 1/2`, `2 power cycles detected`, przełączenie partycji) |
+| Ustawienia właściciela po flashu | zachowane w NVS: `hold=6s`, okno `50..265 cm`, `hyst=20`, `psrc=distance`, `night_only=true`, `restore_state=true`, `timeout` modułu 30 s |
+
+Oba obrazy OTA zawierają teraz firmware z `/api/ota`, więc nieudana aktualizacja da się
+cofnąć wyłącznikiem bez rozkręcania oprawy.
 
 Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3, sieć domowa):
 
