@@ -66,12 +66,31 @@ bramek lub progu z panelu; `{"action":"factory_reset"}` czyści zapamiętaną ko
 Licznik `sensor.restored_writes` w `/api/status` pokazuje, ile wartości trzeba było
 dopisać przy ostatnim handshake'u — niezerowy oznacza, że moduł faktycznie coś zgubił.
 
-⚠️ **Niepotwierdzone na prawdziwym zaniku 230 V** — reset ESP (przez USB/RTS albo OTA)
-**nie** odcina zasilania modułowi (LD2420 wisi na tej samej szynie 3,3 V, ale linia RTS
-resetuje tylko ESP), więc dotychczasowe testy (flash, OTA, restart ESP: `restored_writes=0`,
-progi na miejscu) nie są odpowiednikiem odcięcia z gniazdka i nie wywołały u modułu utraty
-pamięci. Mechanizm odtwarzania jest wgrany i gotowy, ale wymaga potwierdzenia na realnym
-odcięciu 230 V w żyrandolu — patrz plan w §6.
+⚠️ **Potwierdzone na sprzęcie (2026-09-08, po zmianach właściciela)**: `/api/status`
+pokazał `sensor.restored_writes=7` — moduł wstał z siedmioma wartościami niezgodnymi
+z zapamiętanymi, a sterownik je dopisał. Właściciel potwierdził, że ustawienia przestały
+mu ginąć. Wcześniejsze testy przez USB/OTA/reset ESP nie wywoływały utraty, bo reset
+**nie** odcina zasilania modułowi (LD2420 wisi na tej samej szynie 3,3 V, a linia RTS
+resetuje tylko ESP) — dlatego do reprodukcji potrzebne było realne odcięcie zasilania.
+
+### Konfiguracja pracująca w żyrandolu (wybór właściciela, 2026-09-08)
+
+```
+psrc=and              flaga modułu ORAZ okno odległości
+timeout modułu = 6 s  krótki zatrzask po stronie LD2420
+hold_s = 2 s          blank_ms = 500    on_delay_ms = 100
+okno 50..280 cm       hyst_cm = 20      night_only = true   restore_state = true
+gates 0..12
+move : 60000,25000,3000,2000,500,400,400,300,300,300,300,250,250,200,200,200
+still: 30000,7000,70,80,90,100,200,150,150,100,100,100,100,100,100,100
+```
+
+Dlaczego to działa: tryb `and` sprawia, że gdy moduł „zacina się” na odległości (znany
+problem tego egzemplarza), opadnięcie flagi obecności po jego własnym `timeout` i tak
+zdejmuje obecność, więc światło gaśnie. Niskie progi `still` na bramkach 2–5 dają
+wykrywanie bezruchu (właściciel: „gasło, jak siadłem”), a krótkie `blank_ms`/`on_delay_ms`
+zachowują szybką reakcję przy wejściu. To alternatywa dla rozważanego wcześniej
+podtrzymania zależnego od strefy — nie wymaga wiedzy o położeniu drzwi.
 
 Weryfikacja po wgraniu (2026-09-08, sieć `192.168.1.7`):
 
@@ -106,6 +125,7 @@ Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3, sieć domowa):
 | **Atrybucja źródła zmiany** | naprawione i wgrane: `src=web` po `POST /api/light`, `src=auto` przy automatyce (wcześniej zawsze `matter`) |
 | **Czas z sieci (SNTP) + wschód/zachód** | `sun: timezone set to 'CET-1CEST,M3.5.0,M10.5.0/3'`, `sun: SNTP client started (server pool.ntp.org)`, `sun: time synchronized: 2026-07-30 11:12:03`; wyliczone dla Warszawy 30.07: wschód 04:53, zachód 20:31, okno nocy 20:01–05:23, `is_night=false` o 11:12 (zgodne z rzeczywistością ±2 min) |
 | **Blokada dzienna (`night_only`)** | zweryfikowana w dzień na tym samym zboczu obecności (`dist=29`, `is_night=false`): przy `night_only=false` log `light: lamp ON (source: auto)`, przy `night_only=true` log `light: presence detected but it is daytime (night_only) - not switching on` i `on=false` |
+| **Odtwarzanie konfiguracji LD2420 po zaniku zasilania** | działa: `/api/status` pokazał `sensor.restored_writes=7` po realnym odcięciu — moduł zgubił 7 wartości, sterownik je dopisał; właściciel potwierdził, że ustawienia przestały ginąć |
 | **Heartbeat 1 Hz w sterowniku LD2420** | działa: zmiana `min_cm`/`max_cm` przelicza obecność w ~1 s bez zmiany odczytu z modułu (wcześniej callback leciał tylko przy zmianie ramki, więc zmiana ustawień nie miała efektu do ruchu celu) |
 | **Praca z 230 V** (test właściciela, 2026-08-28, zasilacz HLK) | działa |
 | **Awaryjny tryb serwisowy Wi-Fi (SoftAP)** | działa end-to-end (2026-08-28, test właściciela poza zasięgiem): `POST /api/wifi {"setup_mode":true}` → restart → AP `Swiatlo-D049` w skanie Windows/telefonu, panel `http://192.168.4.1/` odpowiada (GET `/` 200), `GET /api/wifi/scan` zwraca sieci posortowane po RSSI, `POST /api/wifi` zapisuje i restartuje; po resecie wraca do stacji (flaga `swiatlo/prov` czyszczona przy wejściu) |
@@ -442,13 +462,10 @@ Kolejność wg priorytetu właściciela: **żarówka → czujnik → panel**, Ma
    progi `move`/`still` podnieść dla bramek dających fałszywe wyzwolenia. Wartości
    fabryczne są w `ld2420.cpp` (`FACTORY_MOVE_THRESH` / `FACTORY_STILL_THRESH`).
    Dodatkowy filtr aplikacyjny: `max_cm` / `min_cm` w `/api/config`.
-5. **Potwierdzić naprawę utraty konfiguracji przez LD2420** (§2, trzeci błąd): odciąć
-   sterownik od 230 V na kilka sekund (prawdziwe wyjęcie wtyczki/wyłącznik, nie reset
-   ESP — reset nie ścina zasilania modułowi), włączyć z powrotem i sprawdzić
-   `/api/status → sensor.restored_writes`. Wartość > 0 oznacza, że moduł coś zgubił,
-   a ESP to naprawił; log powinien pokazać `ld2420: restored gate … thresholds` albo
-   `restored gates … timeout=…`. Zero przy jednoczesnym `config_valid=true` i zgodnych
-   progach też jest sukcesem (moduł nic nie zgubił przy tym konkretnym odcięciu).
+5. Utrata konfiguracji przez moduł jest już obsłużona i **potwierdzona** (§2, trzeci błąd:
+   `sensor.restored_writes=7` po realnym odcięciu zasilania). Przy kolejnych zmianach
+   progów wystarczy sprawdzać to pole — niezerowe oznacza, że moduł znów coś zgubił,
+   a sterownik to naprawił.
 
 ### Krok 3 — Matter (odłożony, robić po żarówce i czujniku)
 1. Kody z logu: QR `MT:SAGA442C00KA0648G00`, kod ręczny `34970112332`,
