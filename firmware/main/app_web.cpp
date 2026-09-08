@@ -11,6 +11,7 @@
 #include "app_wifi.h"
 #include "ld2420.h"
 
+#include <esp_app_desc.h>
 #include <esp_err.h>
 #include <esp_http_server.h>
 #include <esp_log.h>
@@ -271,6 +272,17 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON_AddBoolToObject(sys, "commissioned", app_matter_commissioned);
     cJSON_AddNumberToObject(sys, "free_heap", esp_get_free_heap_size());
     cJSON_AddNumberToObject(sys, "uptime_s", (double)(esp_timer_get_time() / 1000000));
+
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    if (running) {
+        cJSON_AddStringToObject(sys, "partition", running->label);
+    }
+    const esp_app_desc_t *app = esp_app_get_description();
+    if (app) {
+        cJSON_AddStringToObject(sys, "app_version", app->version);
+        cJSON_AddStringToObject(sys, "app_built", app->date);
+        cJSON_AddStringToObject(sys, "app_time", app->time);
+    }
 
     char sta_ssid[33];
     app_wifi_current_ssid(sta_ssid, sizeof(sta_ssid));
