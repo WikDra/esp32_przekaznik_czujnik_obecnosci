@@ -121,6 +121,8 @@ extern "C" void app_main()
 
     ESP_ERROR_CHECK(app_settings_init());
     ESP_ERROR_CHECK(app_sun_init());
+    /* Zapamiętane parametry czujnika: sterownik odtworzy je po handshake'u z modułem. */
+    ld2420_set_desired_config(app_settings_sensor());
     ESP_ERROR_CHECK(app_light_init());
 
     /* --- tryb serwisowy Wi-Fi: bez Mattera, za to z własnym AP i panelem --- */

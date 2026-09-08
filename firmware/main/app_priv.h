@@ -11,6 +11,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "ld2420.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -55,6 +57,21 @@ esp_err_t app_settings_save(void);
 /* Small counter used by the "cut the power twice to force the lamp ON" feature. */
 uint8_t app_settings_get_power_cycles(void);
 esp_err_t app_settings_set_power_cycles(uint8_t value);
+
+/* ------------------------------------------------------------------ konfiguracja czujnika
+ *
+ * LD2420 nie zapisuje trwale wszystkich parametrów (zweryfikowane: progi `still` wracały
+ * do fabrycznych po odcięciu zasilania, `move` przetrwały). Trzymamy więc pożądane
+ * ustawienia w NVS ESP i odtwarzamy je po każdym starcie modułu.
+ */
+#define APP_SENSOR_GATES LD2420_GATES
+
+typedef ld2420_config_t app_sensor_cfg_t;
+
+app_sensor_cfg_t *app_settings_sensor(void);
+esp_err_t app_settings_sensor_save(void);
+/* Kasuje zapamiętaną konfigurację czujnika (po factory reset modułu). */
+esp_err_t app_settings_sensor_forget(void);
 
 /* ------------------------------------------------------------------ light */
 

@@ -49,6 +49,30 @@ siedzi w oprawie bez dostępu do USB.
 pierwsze wgranie tych poprawek wymagało jednorazowego podłączenia USB (2026-09-08,
 właściciel wyjął sterownik z oprawy). Od tej wersji aktualizacje idą bezprzewodowo.
 
+### Trzeci błąd (2026-09-08): LD2420 gubi część konfiguracji po zaniku zasilania
+
+Właściciel zgłosił, że po odcięciu 230 V progi `still` (bramki bezruchu) i `timeout`
+wracały do starszych wartości (np. ustawiał `timeout=8s`, po odcięciu moduł wstawał
+z `30s`), a progi `move` przetrwały. Diagnoza: moduł LD2420 utrwala parametry we własnej
+pamięci nieulotnej niekonsekwentnie — nie każdy zapis trafia do NVM modułu, część zostaje
+tylko w RAM i ginie po zaniku zasilania.
+
+Poprawka: ESP trzyma **własną** kopię pożądanej konfiguracji czujnika w NVS
+(`app_settings_sensor()`, namespace „swiatlo”, klucze `sn_*`) i po każdym handshake'u
+z modułem (start, `POST /api/sensor {"action":"restart"}`) porównuje odczyt z pożądanym
+stanem, dopisując tylko różnice. Zapis do NVS ESP dzieje się przy każdej zmianie zakresu
+bramek lub progu z panelu; `{"action":"factory_reset"}` czyści zapamiętaną konfigurację
+(inaczej kolejny handshake odtworzyłby stare wartości na świeżo zresetowanym module).
+Licznik `sensor.restored_writes` w `/api/status` pokazuje, ile wartości trzeba było
+dopisać przy ostatnim handshake'u — niezerowy oznacza, że moduł faktycznie coś zgubił.
+
+⚠️ **Niepotwierdzone na prawdziwym zaniku 230 V** — reset ESP (przez USB/RTS albo OTA)
+**nie** odcina zasilania modułowi (LD2420 wisi na tej samej szynie 3,3 V, ale linia RTS
+resetuje tylko ESP), więc dotychczasowe testy (flash, OTA, restart ESP: `restored_writes=0`,
+progi na miejscu) nie są odpowiednikiem odcięcia z gniazdka i nie wywołały u modułu utraty
+pamięci. Mechanizm odtwarzania jest wgrany i gotowy, ale wymaga potwierdzenia na realnym
+odcięciu 230 V w żyrandolu — patrz plan w §6.
+
 Weryfikacja po wgraniu (2026-09-08, sieć `192.168.1.7`):
 
 | Test | Wynik |
@@ -373,8 +397,7 @@ Sekwencja startowa ustawia atrybut Matter OnOff na **rzeczywisty** stan przekaź
 | Metoda | Ścieżka | Body | Opis |
 |---|---|---|---|
 | GET | `/` | – | panel HTML |
-| GET | `/api/status` | – | pełny stan: światło, obecność, dystans, ustawienia, czujnik (bramki, progi), czas i słońce, IP, heap |
-| POST | `/api/light` | `{"on":true}` / `{"toggle":true}` | sterowanie żarówką |
+| GET | `/api/status` | – | pełny stan: światło, obecność, dystans, ustawienia, czujnik (bramki, progi), czas i słońce, IP, heap || POST | `/api/light` | `{"on":true}` / `{"toggle":true}` | sterowanie żarówką |
 | POST | `/api/config` | `{"auto_mode":true,"hold_s":60,"max_cm":400,"min_cm":0,"hyst_cm":30,"blank_ms":1500,"on_delay_ms":300,"presence_src":"distance","restore_state":false}` | ustawienia aplikacji (NVS) |
 | POST | `/api/sensor` | `{"min_gate":1,"max_gate":6,"timeout_s":30}` | zakres i timeout modułu |
 | POST | `/api/sensor` | `{"gate":3,"move":250,"still":200}` | progi jednej bramki (1 bramka ≈ 0,7 m) |
@@ -419,6 +442,13 @@ Kolejność wg priorytetu właściciela: **żarówka → czujnik → panel**, Ma
    progi `move`/`still` podnieść dla bramek dających fałszywe wyzwolenia. Wartości
    fabryczne są w `ld2420.cpp` (`FACTORY_MOVE_THRESH` / `FACTORY_STILL_THRESH`).
    Dodatkowy filtr aplikacyjny: `max_cm` / `min_cm` w `/api/config`.
+5. **Potwierdzić naprawę utraty konfiguracji przez LD2420** (§2, trzeci błąd): odciąć
+   sterownik od 230 V na kilka sekund (prawdziwe wyjęcie wtyczki/wyłącznik, nie reset
+   ESP — reset nie ścina zasilania modułowi), włączyć z powrotem i sprawdzić
+   `/api/status → sensor.restored_writes`. Wartość > 0 oznacza, że moduł coś zgubił,
+   a ESP to naprawił; log powinien pokazać `ld2420: restored gate … thresholds` albo
+   `restored gates … timeout=…`. Zero przy jednoczesnym `config_valid=true` i zgodnych
+   progach też jest sukcesem (moduł nic nie zgubił przy tym konkretnym odcięciu).
 
 ### Krok 3 — Matter (odłożony, robić po żarówce i czujniku)
 1. Kody z logu: QR `MT:SAGA442C00KA0648G00`, kod ręczny `34970112332`,

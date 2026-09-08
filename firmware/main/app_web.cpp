@@ -249,6 +249,8 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON_AddStringToObject(sensor, "fw", st.fw);
     cJSON_AddStringToObject(sensor, "mode", st.mode == LD2420_MODE_ENERGY ? "energy" : "simple");
     cJSON_AddBoolToObject(sensor, "config_valid", st.config_valid);
+    cJSON_AddNumberToObject(sensor, "restored_writes", st.restored_writes);
+    cJSON_AddBoolToObject(sensor, "config_remembered", app_settings_sensor()->valid);
     cJSON_AddNumberToObject(sensor, "min_gate", st.min_gate);
     cJSON_AddNumberToObject(sensor, "max_gate", st.max_gate);
     cJSON_AddNumberToObject(sensor, "timeout_s", st.timeout_s);
@@ -461,6 +463,7 @@ static esp_err_t sensor_post_handler(httpd_req_t *req)
     }
 
     uint32_t gate, move_thresh, still_thresh;
+    bool wrote_gate = false;
     if (err == ESP_OK && json_get_uint(body, "gate", 15, &gate)) {
         ld2420_get_state(&st);
         move_thresh = st.move_thresh[gate];
@@ -468,6 +471,7 @@ static esp_err_t sensor_post_handler(httpd_req_t *req)
         json_get_uint(body, "move", 65535, &move_thresh);
         json_get_uint(body, "still", 65535, &still_thresh);
         err = ld2420_set_gate_threshold((uint8_t)gate, move_thresh, still_thresh);
+        wrote_gate = (err == ESP_OK);
     }
 
     const cJSON *mode = cJSON_GetObjectItemCaseSensitive(body, "mode");
@@ -482,9 +486,11 @@ static esp_err_t sensor_post_handler(httpd_req_t *req)
     }
 
     const cJSON *action = cJSON_GetObjectItemCaseSensitive(body, "action");
+    bool forget_stored = false;
     if (err == ESP_OK && cJSON_IsString(action) && action->valuestring) {
         if (strcmp(action->valuestring, "factory_reset") == 0) {
             err = ld2420_factory_reset();
+            forget_stored = true; /* nie odtwarzaj starych wartości po resecie modułu */
         } else if (strcmp(action->valuestring, "restart") == 0) {
             err = ld2420_restart();
         } else if (strcmp(action->valuestring, "refresh") == 0) {
@@ -500,6 +506,22 @@ static esp_err_t sensor_post_handler(httpd_req_t *req)
     }
 
     ld2420_get_state(&st);
+
+    /* Zapamiętujemy pełny stan konfiguracji modułu, żeby odtworzyć go po zaniku
+     * zasilania - LD2420 nie utrwala niezawodnie wszystkich parametrów. */
+    if (forget_stored) {
+        app_settings_sensor_forget();
+    } else if (st.config_valid && (ranges_touched || wrote_gate)) {
+        app_sensor_cfg_t *saved = app_settings_sensor();
+        saved->valid = true;
+        saved->min_gate = st.min_gate;
+        saved->max_gate = st.max_gate;
+        saved->timeout_s = st.timeout_s;
+        memcpy(saved->move_thresh, st.move_thresh, sizeof(saved->move_thresh));
+        memcpy(saved->still_thresh, st.still_thresh, sizeof(saved->still_thresh));
+        app_settings_sensor_save();
+    }
+
     cJSON *root = cJSON_CreateObject();
     cJSON_AddBoolToObject(root, "ok", true);
     cJSON_AddNumberToObject(root, "min_gate", st.min_gate);

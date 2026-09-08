@@ -72,6 +72,7 @@ typedef struct {
 } ld2420_reply_t;
 
 static ld2420_reply_t s_reply;
+static const ld2420_config_t *s_desired;
 
 static inline void lock(void) { xSemaphoreTake(s_lock, portMAX_DELAY); }
 static inline void unlock(void) { xSemaphoreGive(s_lock); }
@@ -347,6 +348,75 @@ static esp_err_t read_config_locked(void)
     return ESP_OK;
 }
 
+/* Zapisuje do modułu te wartości z pożądanej konfiguracji, które różnią się od
+ * odczytanych. Caller trzyma lock i musi być w trybie konfiguracji. */
+static esp_err_t apply_desired_locked(void)
+{
+    if (!s_desired || !s_desired->valid) {
+        return ESP_OK;
+    }
+
+    int fixed = 0;
+    esp_err_t err = ESP_OK;
+
+    if (s_state.min_gate != s_desired->min_gate || s_state.max_gate != s_desired->max_gate ||
+        s_state.timeout_s != s_desired->timeout_s) {
+        const uint16_t regs[3] = {REG_MIN_GATE, REG_MAX_GATE, REG_TIMEOUT};
+        const uint32_t vals[3] = {s_desired->min_gate, s_desired->max_gate, s_desired->timeout_s};
+        err = write_abd(regs, vals, 3);
+        if (err == ESP_OK) {
+            fixed++;
+            ESP_LOGW(TAG, "restored gates %u..%u timeout=%us (module had %u..%u %us)",
+                     s_desired->min_gate, s_desired->max_gate, s_desired->timeout_s,
+                     s_state.min_gate, s_state.max_gate, s_state.timeout_s);
+        }
+    }
+
+    for (uint8_t gate = 0; gate < LD2420_GATES && err == ESP_OK; gate++) {
+        if (s_state.move_thresh[gate] == s_desired->move_thresh[gate] &&
+            s_state.still_thresh[gate] == s_desired->still_thresh[gate]) {
+            continue;
+        }
+        const uint16_t regs[2] = {REG_MOVE_THRESH(gate), REG_STILL_THRESH(gate)};
+        const uint32_t vals[2] = {s_desired->move_thresh[gate], s_desired->still_thresh[gate]};
+        err = write_abd(regs, vals, 2);
+        if (err == ESP_OK) {
+            fixed++;
+            ESP_LOGW(TAG, "restored gate %u thresholds: move %lu->%lu still %lu->%lu", gate,
+                     (unsigned long)s_state.move_thresh[gate],
+                     (unsigned long)s_desired->move_thresh[gate],
+                     (unsigned long)s_state.still_thresh[gate],
+                     (unsigned long)s_desired->still_thresh[gate]);
+        }
+        vTaskDelay(1);
+    }
+
+    if (fixed > 0 && err == ESP_OK) {
+        /* Czytamy z powrotem, żeby w panelu widzieć rzeczywisty stan modułu. */
+        err = read_config_locked();
+        ESP_LOGW(TAG, "sensor configuration restored (%d write(s)): %s", fixed,
+                 esp_err_to_name(err));
+    }
+    s_state.restored_writes = (uint8_t)fixed;
+    return err;
+}
+
+esp_err_t ld2420_apply_desired_config(void)
+{
+    lock();
+    uint16_t mode = s_state.mode;
+    esp_err_t err = config_mode(true);
+    if (err == ESP_OK) {
+        err = apply_desired_locked();
+        write_system_mode(mode);
+        config_mode(false);
+    }
+    unlock();
+    return err;
+}
+
+void ld2420_set_desired_config(const ld2420_config_t *cfg) { s_desired = cfg; }
+
 /* ------------------------------------------------------------ tasks */
 
 static void reader_task(void *arg)
@@ -407,9 +477,21 @@ static void config_task(void *arg)
             if (send_cmd(CMD_READ_VERSION, NULL, 0, true) == ESP_OK) {
                 ESP_LOGI(TAG, "firmware %s", s_state.fw);
             }
-            if (read_config_locked() == ESP_OK) {
+            esp_err_t cfg_err = read_config_locked();
+            if (cfg_err == ESP_OK) {
                 ESP_LOGI(TAG, "config: min_gate=%u max_gate=%u timeout=%us",
                          s_state.min_gate, s_state.max_gate, s_state.timeout_s);
+                /* Moduł nie utrwala niezawodnie wszystkich parametrów - dociągamy je
+                 * do tego, co użytkownik ustawił (zapamiętane w NVS ESP). */
+                apply_desired_locked();
+            } else {
+                /* Bez wiarygodnego odczytu nie pokazujemy w panelu zer i próbujemy jeszcze
+                 * raz - inaczej użytkownik mógłby zapisać przypadkowe wartości. */
+                config_mode(false);
+                unlock();
+                ESP_LOGW(TAG, "config read failed (%s), retrying in 5 s", esp_err_to_name(cfg_err));
+                vTaskDelay(pdMS_TO_TICKS(5000));
+                continue;
             }
             uint16_t mode = (fw_version_int(s_state.fw) >= 154) ? LD2420_MODE_ENERGY : LD2420_MODE_SIMPLE;
             write_system_mode(mode);
@@ -601,7 +683,25 @@ esp_err_t ld2420_factory_reset(void)
 esp_err_t ld2420_restart(void)
 {
     lock();
+    uint16_t mode = s_state.mode;
     esp_err_t err = send_cmd(CMD_RESTART, NULL, 0, false);
+    unlock();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    /* Moduł po restarcie wraca do swojej ostatniej utrwalonej konfiguracji, a ta nie
+     * zawsze zawiera nasze ostatnie zapisy - więc odczytujemy i dociągamy do pożądanej. */
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    lock();
+    err = config_mode(true);
+    if (err == ESP_OK) {
+        if (read_config_locked() == ESP_OK) {
+            apply_desired_locked();
+        }
+        write_system_mode(mode);
+        config_mode(false);
+    }
     unlock();
     return err;
 }

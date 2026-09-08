@@ -13,6 +13,8 @@ static const char *NVS_NS = "swiatlo";
 
 static app_settings_t s_settings;
 
+static void sensor_cfg_load(void);
+
 static void load_defaults(void)
 {
 #ifdef CONFIG_APP_AUTO_MODE_DEFAULT
@@ -117,10 +119,77 @@ esp_err_t app_settings_init(void)
     ESP_LOGI(TAG, "loaded: auto=%d hold=%us range=%u..%ucm hyst=%ucm psrc=%u restore=%d last_on=%d",
              s_settings.auto_mode, s_settings.hold_s, s_settings.min_cm, s_settings.max_cm,
              s_settings.hyst_cm, s_settings.presence_src, s_settings.restore_state, s_settings.last_on);
+    sensor_cfg_load();
     return ESP_OK;
 }
 
 app_settings_t *app_settings(void) { return &s_settings; }
+
+/* ------------------------------------------------------------ konfiguracja czujnika */
+
+static app_sensor_cfg_t s_sensor_cfg;
+
+app_sensor_cfg_t *app_settings_sensor(void) { return &s_sensor_cfg; }
+
+static void sensor_cfg_load(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+        return;
+    }
+    uint8_t valid = 0;
+    uint16_t u16;
+    if (nvs_get_u8(h, "sn_valid", &valid) == ESP_OK && valid) {
+        if (nvs_get_u16(h, "sn_min", &u16) == ESP_OK) {
+            s_sensor_cfg.min_gate = u16;
+        }
+        if (nvs_get_u16(h, "sn_max", &u16) == ESP_OK) {
+            s_sensor_cfg.max_gate = u16;
+        }
+        if (nvs_get_u16(h, "sn_to", &u16) == ESP_OK) {
+            s_sensor_cfg.timeout_s = u16;
+        }
+        size_t len = sizeof(s_sensor_cfg.move_thresh);
+        if (nvs_get_blob(h, "sn_move", s_sensor_cfg.move_thresh, &len) == ESP_OK &&
+            len == sizeof(s_sensor_cfg.move_thresh)) {
+            len = sizeof(s_sensor_cfg.still_thresh);
+            if (nvs_get_blob(h, "sn_still", s_sensor_cfg.still_thresh, &len) == ESP_OK &&
+                len == sizeof(s_sensor_cfg.still_thresh)) {
+                s_sensor_cfg.valid = true;
+            }
+        }
+    }
+    nvs_close(h);
+
+    if (s_sensor_cfg.valid) {
+        ESP_LOGI(TAG, "sensor config remembered: gates %u..%u timeout=%us (odtworzę po starcie modułu)",
+                 s_sensor_cfg.min_gate, s_sensor_cfg.max_gate, s_sensor_cfg.timeout_s);
+    }
+}
+
+esp_err_t app_settings_sensor_save(void)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+    nvs_set_u8(h, "sn_valid", s_sensor_cfg.valid ? 1 : 0);
+    nvs_set_u16(h, "sn_min", s_sensor_cfg.min_gate);
+    nvs_set_u16(h, "sn_max", s_sensor_cfg.max_gate);
+    nvs_set_u16(h, "sn_to", s_sensor_cfg.timeout_s);
+    nvs_set_blob(h, "sn_move", s_sensor_cfg.move_thresh, sizeof(s_sensor_cfg.move_thresh));
+    nvs_set_blob(h, "sn_still", s_sensor_cfg.still_thresh, sizeof(s_sensor_cfg.still_thresh));
+    err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t app_settings_sensor_forget(void)
+{
+    memset(&s_sensor_cfg, 0, sizeof(s_sensor_cfg));
+    return app_settings_sensor_save();
+}
 
 uint8_t app_settings_get_power_cycles(void)
 {

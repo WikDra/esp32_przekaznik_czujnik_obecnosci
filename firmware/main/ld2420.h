@@ -45,9 +45,22 @@ typedef struct {
     uint32_t move_thresh[LD2420_GATES];
     uint32_t still_thresh[LD2420_GATES];
     bool config_valid;
+    /* Ile wartości sterownik musiał dopisać do modułu przy ostatnim handshake'u -
+     * niezerowe oznacza, że moduł zgubił konfigurację (np. po zaniku zasilania). */
+    uint8_t restored_writes;
 } ld2420_state_t;
 
 typedef void (*ld2420_presence_cb_t)(bool presence, uint16_t distance_cm);
+
+/* Zestaw parametrów modułu, którymi zarządzamy (i które odtwarzamy po starcie). */
+typedef struct {
+    bool valid;
+    uint16_t min_gate;
+    uint16_t max_gate;
+    uint16_t timeout_s;
+    uint32_t move_thresh[LD2420_GATES];
+    uint32_t still_thresh[LD2420_GATES];
+} ld2420_config_t;
 
 /* Starts UART + reader task, reads firmware version and current configuration. */
 esp_err_t ld2420_init(ld2420_presence_cb_t cb);
@@ -62,6 +75,20 @@ esp_err_t ld2420_set_gate_threshold(uint8_t gate, uint32_t move_thresh, uint32_t
 esp_err_t ld2420_set_mode(uint16_t mode);
 esp_err_t ld2420_factory_reset(void);
 esp_err_t ld2420_restart(void);
+
+/* Pożądana konfiguracja odtwarzana po każdym starcie modułu.
+ *
+ * LD2420 nie utrwala niezawodnie wszystkich parametrów - zweryfikowane na egzemplarzu
+ * właściciela: po odcięciu zasilania progi `still` i `timeout` wracały do starszych
+ * wartości, a progi `move` zostawały. Sterownik porównuje więc odczyt z modułu z tym,
+ * co ma być, i dopisuje różnice zaraz po handshake'u.
+ *
+ * Wskaźnik musi pozostać ważny (wskazuje na strukturę z app_settings).
+ */
+void ld2420_set_desired_config(const ld2420_config_t *cfg);
+
+/* Wymusza ponowne porównanie i zapis pożądanej konfiguracji (np. po zmianie z panelu). */
+esp_err_t ld2420_apply_desired_config(void);
 
 #ifdef __cplusplus
 }
