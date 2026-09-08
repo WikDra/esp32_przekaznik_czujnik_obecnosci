@@ -67,10 +67,15 @@ static esp_err_t send_error(httpd_req_t *req, int code, const char *msg)
 /* Returns true when the request carries valid credentials, otherwise answers 401. */
 static bool check_auth(httpd_req_t *req)
 {
-    static char expected[128];
-    if (expected[0] == '\0') {
+    static char expected[160];
+    static uint32_t expected_generation = UINT32_MAX;
+
+    /* Poświadczenia mogą się zmienić w trakcie pracy (POST /api/password), dlatego
+     * cache jest wiązany z licznikiem zmian z app_settings. */
+    if (expected[0] == '\0' || expected_generation != app_settings_web_generation()) {
         char creds[96];
-        int n = snprintf(creds, sizeof(creds), "%s:%s", CONFIG_APP_WEB_USER, CONFIG_APP_WEB_PASS);
+        int n = snprintf(creds, sizeof(creds), "%s:%s", app_settings_web_user(),
+                         app_settings_web_pass());
         size_t olen = 0;
         unsigned char b64[128];
         if (mbedtls_base64_encode(b64, sizeof(b64), &olen, (const unsigned char *)creds, n) != 0) {
@@ -78,6 +83,7 @@ static bool check_auth(httpd_req_t *req)
             return false;
         }
         snprintf(expected, sizeof(expected), "Basic %.*s", (int)olen, (const char *)b64);
+        expected_generation = app_settings_web_generation();
     }
 
     char provided[160];
@@ -285,6 +291,8 @@ static esp_err_t status_get_handler(httpd_req_t *req)
         cJSON_AddStringToObject(sys, "app_built", app->date);
         cJSON_AddStringToObject(sys, "app_time", app->time);
     }
+    /* Sam login (nigdy hasło) - panel podpowiada go w formularzu zmiany hasła. */
+    cJSON_AddStringToObject(sys, "web_user", app_settings_web_user());
 
     char sta_ssid[33];
     app_wifi_current_ssid(sta_ssid, sizeof(sta_ssid));
@@ -325,6 +333,112 @@ static esp_err_t light_post_handler(httpd_req_t *req)
     return send_json(req, root, 200);
 }
 
+/* Stosuje pola ustawień aplikacji z obiektu JSON. Zwraca liczbę rozpoznanych pól,
+ * albo -1 przy nieprawidłowej wartości. Używane przez /api/config i import z /api/settings,
+ * żeby obie ścieżki nie rozjechały się w walidacji. */
+static int apply_app_config(const cJSON *src, bool *tz_changed)
+{
+    app_settings_t *cfg = app_settings();
+    int applied = 0;
+    bool b;
+    uint32_t u;
+
+    if (tz_changed) {
+        *tz_changed = false;
+    }
+
+    if (json_get_bool(src, "auto_mode", &b)) {
+        cfg->auto_mode = b;
+        applied++;
+    }
+    if (json_get_bool(src, "restore_state", &b)) {
+        cfg->restore_state = b;
+        applied++;
+    }
+    if (json_get_bool(src, "night_only", &b)) {
+        cfg->night_only = b;
+        applied++;
+    }
+
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(src, "sunset_off_min");
+    if (cJSON_IsNumber(item) && item->valuedouble >= -180 && item->valuedouble <= 180) {
+        cfg->sunset_off_min = (int16_t)item->valuedouble;
+        applied++;
+    }
+    item = cJSON_GetObjectItemCaseSensitive(src, "sunrise_off_min");
+    if (cJSON_IsNumber(item) && item->valuedouble >= -180 && item->valuedouble <= 180) {
+        cfg->sunrise_off_min = (int16_t)item->valuedouble;
+        applied++;
+    }
+    item = cJSON_GetObjectItemCaseSensitive(src, "lat");
+    if (cJSON_IsNumber(item) && item->valuedouble >= -90.0 && item->valuedouble <= 90.0) {
+        cfg->lat_udeg = (int32_t)(item->valuedouble * 1000000.0);
+        applied++;
+    }
+    item = cJSON_GetObjectItemCaseSensitive(src, "lon");
+    if (cJSON_IsNumber(item) && item->valuedouble >= -180.0 && item->valuedouble <= 180.0) {
+        cfg->lon_udeg = (int32_t)(item->valuedouble * 1000000.0);
+        applied++;
+    }
+    item = cJSON_GetObjectItemCaseSensitive(src, "tz");
+    if (cJSON_IsString(item) && item->valuestring && strlen(item->valuestring) < sizeof(cfg->tz)) {
+        strlcpy(cfg->tz, item->valuestring, sizeof(cfg->tz));
+        applied++;
+        if (tz_changed) {
+            *tz_changed = true;
+        }
+    }
+    item = cJSON_GetObjectItemCaseSensitive(src, "ntp_server");
+    if (cJSON_IsString(item) && item->valuestring &&
+        strlen(item->valuestring) < sizeof(cfg->ntp_server)) {
+        /* Zmiana serwera SNTP wymaga restartu ESP - klient startuje raz, przy pierwszym IP. */
+        strlcpy(cfg->ntp_server, item->valuestring, sizeof(cfg->ntp_server));
+        applied++;
+    }
+    if (json_get_uint(src, "hold_s", 3600, &u)) {
+        cfg->hold_s = (uint16_t)u;
+        applied++;
+    }
+    if (json_get_uint(src, "max_cm", 1000, &u)) {
+        cfg->max_cm = (uint16_t)u;
+        applied++;
+    }
+    if (json_get_uint(src, "min_cm", 1000, &u)) {
+        cfg->min_cm = (uint16_t)u;
+        applied++;
+    }
+    if (json_get_uint(src, "hyst_cm", 300, &u)) {
+        cfg->hyst_cm = (uint16_t)u;
+        applied++;
+    }
+    if (json_get_uint(src, "blank_ms", 10000, &u)) {
+        cfg->blank_ms = (uint16_t)u;
+        applied++;
+    }
+    if (json_get_uint(src, "on_delay_ms", 5000, &u)) {
+        cfg->on_delay_ms = (uint16_t)u;
+        applied++;
+    }
+
+    const cJSON *psrc = cJSON_GetObjectItemCaseSensitive(src, "presence_src");
+    if (cJSON_IsString(psrc) && psrc->valuestring) {
+        if (strcmp(psrc->valuestring, "distance") == 0) {
+            cfg->presence_src = PRESENCE_SRC_DISTANCE;
+        } else if (strcmp(psrc->valuestring, "flag") == 0) {
+            cfg->presence_src = PRESENCE_SRC_FLAG;
+        } else if (strcmp(psrc->valuestring, "and") == 0) {
+            cfg->presence_src = PRESENCE_SRC_AND;
+        } else {
+            return -1;
+        }
+        applied++;
+    } else if (json_get_uint(src, "presence_src", PRESENCE_SRC_FLAG, &u)) {
+        cfg->presence_src = (uint8_t)u;
+        applied++;
+    }
+    return applied;
+}
+
 /* Application-side settings (automation window, hold time, ...). */
 static esp_err_t config_post_handler(httpd_req_t *req)
 {
@@ -337,80 +451,13 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     }
 
     app_settings_t *cfg = app_settings();
-    bool b;
-    uint32_t u;
-    if (json_get_bool(body, "auto_mode", &b)) {
-        cfg->auto_mode = b;
-    }
-    if (json_get_bool(body, "restore_state", &b)) {
-        cfg->restore_state = b;
-    }
-    if (json_get_bool(body, "night_only", &b)) {
-        cfg->night_only = b;
-    }
-
-    const cJSON *item = cJSON_GetObjectItemCaseSensitive(body, "sunset_off_min");
-    if (cJSON_IsNumber(item) && item->valuedouble >= -180 && item->valuedouble <= 180) {
-        cfg->sunset_off_min = (int16_t)item->valuedouble;
-    }
-    item = cJSON_GetObjectItemCaseSensitive(body, "sunrise_off_min");
-    if (cJSON_IsNumber(item) && item->valuedouble >= -180 && item->valuedouble <= 180) {
-        cfg->sunrise_off_min = (int16_t)item->valuedouble;
-    }
-    item = cJSON_GetObjectItemCaseSensitive(body, "lat");
-    if (cJSON_IsNumber(item) && item->valuedouble >= -90.0 && item->valuedouble <= 90.0) {
-        cfg->lat_udeg = (int32_t)(item->valuedouble * 1000000.0);
-    }
-    item = cJSON_GetObjectItemCaseSensitive(body, "lon");
-    if (cJSON_IsNumber(item) && item->valuedouble >= -180.0 && item->valuedouble <= 180.0) {
-        cfg->lon_udeg = (int32_t)(item->valuedouble * 1000000.0);
-    }
-
     bool tz_changed = false;
-    item = cJSON_GetObjectItemCaseSensitive(body, "tz");
-    if (cJSON_IsString(item) && item->valuestring && strlen(item->valuestring) < sizeof(cfg->tz)) {
-        strlcpy(cfg->tz, item->valuestring, sizeof(cfg->tz));
-        tz_changed = true;
-    }
-    item = cJSON_GetObjectItemCaseSensitive(body, "ntp_server");
-    if (cJSON_IsString(item) && item->valuestring && strlen(item->valuestring) < sizeof(cfg->ntp_server)) {
-        strlcpy(cfg->ntp_server, item->valuestring, sizeof(cfg->ntp_server));
-        /* Zmiana serwera SNTP wymaga restartu ESP - klient startuje raz, przy pierwszym IP. */
-    }
-    if (json_get_uint(body, "hold_s", 3600, &u)) {
-        cfg->hold_s = (uint16_t)u;
-    }
-    if (json_get_uint(body, "max_cm", 1000, &u)) {
-        cfg->max_cm = (uint16_t)u;
-    }
-    if (json_get_uint(body, "min_cm", 1000, &u)) {
-        cfg->min_cm = (uint16_t)u;
-    }
-    if (json_get_uint(body, "hyst_cm", 300, &u)) {
-        cfg->hyst_cm = (uint16_t)u;
-    }
-    if (json_get_uint(body, "blank_ms", 10000, &u)) {
-        cfg->blank_ms = (uint16_t)u;
-    }
-    if (json_get_uint(body, "on_delay_ms", 5000, &u)) {
-        cfg->on_delay_ms = (uint16_t)u;
-    }
-    const cJSON *psrc = cJSON_GetObjectItemCaseSensitive(body, "presence_src");
-    if (cJSON_IsString(psrc) && psrc->valuestring) {
-        if (strcmp(psrc->valuestring, "distance") == 0) {
-            cfg->presence_src = PRESENCE_SRC_DISTANCE;
-        } else if (strcmp(psrc->valuestring, "flag") == 0) {
-            cfg->presence_src = PRESENCE_SRC_FLAG;
-        } else if (strcmp(psrc->valuestring, "and") == 0) {
-            cfg->presence_src = PRESENCE_SRC_AND;
-        } else {
-            cJSON_Delete(body);
-            return send_error(req, 400, "presence_src must be \"and\", \"distance\" or \"flag\"");
-        }
-    } else if (json_get_uint(body, "presence_src", PRESENCE_SRC_FLAG, &u)) {
-        cfg->presence_src = (uint8_t)u;
-    }
+    const int applied = apply_app_config(body, &tz_changed);
     cJSON_Delete(body);
+
+    if (applied < 0) {
+        return send_error(req, 400, "presence_src must be \"and\", \"distance\" or \"flag\"");
+    }
 
     if (tz_changed) {
         app_sun_apply_timezone();
@@ -681,6 +728,210 @@ static esp_err_t ota_post_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* --- zmiana hasła panelu --- */
+
+static esp_err_t password_post_handler(httpd_req_t *req)
+{
+    if (!check_auth(req)) {
+        return ESP_OK;
+    }
+    cJSON *body = read_json_body(req);
+    if (!body) {
+        return send_error(req, 400, "invalid json body");
+    }
+
+    const cJSON *cur = cJSON_GetObjectItemCaseSensitive(body, "current");
+    const cJSON *pass = cJSON_GetObjectItemCaseSensitive(body, "password");
+    const cJSON *user = cJSON_GetObjectItemCaseSensitive(body, "user");
+
+    /* Dodatkowe potwierdzenie aktualnym hasłem: przeglądarka trzyma Basic Auth
+     * w pamięci, więc bez tego wystarczyłaby otwarta karta, żeby zmienić hasło. */
+    if (!cJSON_IsString(cur) || strcmp(cur->valuestring, app_settings_web_pass()) != 0) {
+        cJSON_Delete(body);
+        return send_error(req, 403, "current password does not match");
+    }
+    if (!cJSON_IsString(pass)) {
+        cJSON_Delete(body);
+        return send_error(req, 400, "expected {\"current\":\"...\",\"password\":\"...\"}");
+    }
+
+    const char *new_user = cJSON_IsString(user) && user->valuestring[0]
+                               ? user->valuestring
+                               : app_settings_web_user();
+    esp_err_t err = app_settings_set_web_credentials(new_user, pass->valuestring);
+    cJSON_Delete(body);
+    if (err == ESP_ERR_INVALID_ARG) {
+        return send_error(req, 400, "user must be non-empty and password at least 4 characters");
+    }
+    if (err != ESP_OK) {
+        return send_error(req, 500, esp_err_to_name(err));
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "ok", true);
+    cJSON_AddStringToObject(root, "user", app_settings_web_user());
+    cJSON_AddStringToObject(root, "info", "password changed - reload the panel and log in again");
+    return send_json(req, root, 200);
+}
+
+/* --- kopia zapasowa ustawień (eksport/import JSON) ---
+ *
+ * Świadomie NIE eksportujemy sekretów: hasła panelu ani danych Wi-Fi. Kopia ma służyć
+ * do odtworzenia kalibracji i zachowania automatyki, a nie do klonowania dostępu.
+ */
+static void settings_to_json(cJSON *root)
+{
+    app_settings_t *cfg = app_settings();
+    cJSON_AddNumberToObject(root, "version", 1);
+
+    cJSON *automation = cJSON_AddObjectToObject(root, "config");
+    cJSON_AddBoolToObject(automation, "auto_mode", cfg->auto_mode);
+    cJSON_AddNumberToObject(automation, "hold_s", cfg->hold_s);
+    cJSON_AddNumberToObject(automation, "max_cm", cfg->max_cm);
+    cJSON_AddNumberToObject(automation, "min_cm", cfg->min_cm);
+    cJSON_AddNumberToObject(automation, "hyst_cm", cfg->hyst_cm);
+    cJSON_AddNumberToObject(automation, "blank_ms", cfg->blank_ms);
+    cJSON_AddNumberToObject(automation, "on_delay_ms", cfg->on_delay_ms);
+    cJSON_AddStringToObject(automation, "presence_src",
+                            cfg->presence_src == PRESENCE_SRC_DISTANCE ? "distance"
+                            : cfg->presence_src == PRESENCE_SRC_FLAG   ? "flag"
+                                                                      : "and");
+    cJSON_AddBoolToObject(automation, "restore_state", cfg->restore_state);
+    cJSON_AddBoolToObject(automation, "night_only", cfg->night_only);
+    cJSON_AddNumberToObject(automation, "sunset_off_min", cfg->sunset_off_min);
+    cJSON_AddNumberToObject(automation, "sunrise_off_min", cfg->sunrise_off_min);
+    cJSON_AddNumberToObject(automation, "lat", (double)cfg->lat_udeg / 1000000.0);
+    cJSON_AddNumberToObject(automation, "lon", (double)cfg->lon_udeg / 1000000.0);
+    cJSON_AddStringToObject(automation, "tz", cfg->tz);
+    cJSON_AddStringToObject(automation, "ntp_server", cfg->ntp_server);
+
+    ld2420_state_t st;
+    ld2420_get_state(&st);
+    cJSON *sensor = cJSON_AddObjectToObject(root, "sensor");
+    cJSON_AddNumberToObject(sensor, "min_gate", st.min_gate);
+    cJSON_AddNumberToObject(sensor, "max_gate", st.max_gate);
+    cJSON_AddNumberToObject(sensor, "timeout_s", st.timeout_s);
+    cJSON *move = cJSON_AddArrayToObject(sensor, "move");
+    cJSON *still = cJSON_AddArrayToObject(sensor, "still");
+    for (int i = 0; i < LD2420_GATES; i++) {
+        cJSON_AddItemToArray(move, cJSON_CreateNumber(st.move_thresh[i]));
+        cJSON_AddItemToArray(still, cJSON_CreateNumber(st.still_thresh[i]));
+    }
+}
+
+static esp_err_t settings_get_handler(httpd_req_t *req)
+{
+    if (!check_auth(req)) {
+        return ESP_OK;
+    }
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "ok", true);
+    settings_to_json(root);
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"swiatlo-config.json\"");
+    return send_json(req, root, 200);
+}
+
+static esp_err_t settings_post_handler(httpd_req_t *req)
+{
+    if (!check_auth(req)) {
+        return ESP_OK;
+    }
+    cJSON *body = read_json_body(req);
+    if (!body) {
+        return send_error(req, 400, "invalid json body");
+    }
+
+    int applied_app = 0;
+    int applied_sensor = 0;
+    esp_err_t err = ESP_OK;
+
+    /* --- ustawienia aplikacji --- */
+    const cJSON *cfg_json = cJSON_GetObjectItemCaseSensitive(body, "config");
+    if (cJSON_IsObject(cfg_json)) {
+        bool tz_changed = false;
+        applied_app = apply_app_config(cfg_json, &tz_changed);
+        if (applied_app > 0) {
+            if (tz_changed) {
+                app_sun_apply_timezone();
+            }
+            err = app_settings_save();
+        }
+    }
+
+    /* --- konfiguracja czujnika --- */
+    const cJSON *sensor_json = cJSON_GetObjectItemCaseSensitive(body, "sensor");
+    if (err == ESP_OK && cJSON_IsObject(sensor_json)) {
+        ld2420_state_t st;
+        ld2420_get_state(&st);
+        uint32_t min_gate = st.min_gate, max_gate = st.max_gate, timeout_s = st.timeout_s;
+        bool ranges = false;
+        ranges |= json_get_uint(sensor_json, "min_gate", 15, &min_gate);
+        ranges |= json_get_uint(sensor_json, "max_gate", 15, &max_gate);
+        ranges |= json_get_uint(sensor_json, "timeout_s", 65535, &timeout_s);
+        /* Nie zapisujemy do modułu, jeśli nic się nie zmienia - jego pamięć nieulotna
+         * ma ograniczoną liczbę cykli, a import bywa powtarzany. */
+        if (ranges && (min_gate != st.min_gate || max_gate != st.max_gate ||
+                       timeout_s != st.timeout_s)) {
+            err = ld2420_set_ranges((uint16_t)min_gate, (uint16_t)max_gate, (uint16_t)timeout_s);
+            if (err == ESP_OK) {
+                applied_sensor++;
+            }
+        }
+
+        const cJSON *move = cJSON_GetObjectItemCaseSensitive(sensor_json, "move");
+        const cJSON *still = cJSON_GetObjectItemCaseSensitive(sensor_json, "still");
+        if (err == ESP_OK && cJSON_IsArray(move) && cJSON_IsArray(still) &&
+            cJSON_GetArraySize(move) == LD2420_GATES && cJSON_GetArraySize(still) == LD2420_GATES) {
+            for (int gate = 0; gate < LD2420_GATES && err == ESP_OK; gate++) {
+                const cJSON *m = cJSON_GetArrayItem(move, gate);
+                const cJSON *s = cJSON_GetArrayItem(still, gate);
+                if (!cJSON_IsNumber(m) || !cJSON_IsNumber(s)) {
+                    continue;
+                }
+                ld2420_get_state(&st);
+                if (st.move_thresh[gate] == (uint32_t)m->valuedouble &&
+                    st.still_thresh[gate] == (uint32_t)s->valuedouble) {
+                    continue; /* bez zmian - nie zużywamy pamięci modułu */
+                }
+                err = ld2420_set_gate_threshold((uint8_t)gate, (uint32_t)m->valuedouble,
+                                                (uint32_t)s->valuedouble);
+                if (err == ESP_OK) {
+                    applied_sensor++;
+                }
+            }
+        }
+
+        /* Zapamiętaj pełny stan, żeby przetrwał zanik zasilania modułu. */
+        if (err == ESP_OK) {
+            ld2420_get_state(&st);
+            if (st.config_valid) {
+                app_sensor_cfg_t *saved = app_settings_sensor();
+                saved->valid = true;
+                saved->min_gate = st.min_gate;
+                saved->max_gate = st.max_gate;
+                saved->timeout_s = st.timeout_s;
+                memcpy(saved->move_thresh, st.move_thresh, sizeof(saved->move_thresh));
+                memcpy(saved->still_thresh, st.still_thresh, sizeof(saved->still_thresh));
+                app_settings_sensor_save();
+            }
+        }
+    }
+    cJSON_Delete(body);
+
+    if (err != ESP_OK) {
+        return send_error(req, 500, esp_err_to_name(err));
+    }
+
+    ESP_LOGW(TAG, "settings imported: %d app field(s), %d sensor write(s)", applied_app,
+             applied_sensor);
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "ok", true);
+    cJSON_AddNumberToObject(root, "app_fields", applied_app);
+    cJSON_AddNumberToObject(root, "sensor_writes", applied_sensor);
+    settings_to_json(root);
+    return send_json(req, root, 200);
+}
+
 static void reboot_timer_cb(void *arg)
 {
     (void)arg;
@@ -725,7 +976,7 @@ esp_err_t app_web_start(void)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = CONFIG_APP_WEB_PORT;
-    config.max_uri_handlers = 10;
+    config.max_uri_handlers = 14;
     /* RAM on the ESP32-C3 is tight next to Matter + BLE, so keep the socket pool small. */
     config.max_open_sockets = 4;
     config.stack_size = 6144;
@@ -749,6 +1000,9 @@ esp_err_t app_web_start(void)
         {.uri = "/api/wifi", .method = HTTP_POST, .handler = wifi_post_handler, .user_ctx = NULL},
         {.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_get_handler, .user_ctx = NULL},
         {.uri = "/api/ota", .method = HTTP_POST, .handler = ota_post_handler, .user_ctx = NULL},
+        {.uri = "/api/password", .method = HTTP_POST, .handler = password_post_handler, .user_ctx = NULL},
+        {.uri = "/api/settings", .method = HTTP_GET, .handler = settings_get_handler, .user_ctx = NULL},
+        {.uri = "/api/settings", .method = HTTP_POST, .handler = settings_post_handler, .user_ctx = NULL},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_post_handler, .user_ctx = NULL},
     };
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {
@@ -757,7 +1011,8 @@ esp_err_t app_web_start(void)
 
     get_ip_str(ip, sizeof(ip));
 #if CONFIG_APP_WEB_AUTH
-    ESP_LOGI(TAG, "panel: http://%s:%d/ (basic auth, user '%s')", ip, CONFIG_APP_WEB_PORT, CONFIG_APP_WEB_USER);
+    ESP_LOGI(TAG, "panel: http://%s:%d/ (basic auth, user '%s')", ip, CONFIG_APP_WEB_PORT,
+             app_settings_web_user());
 #else
     ESP_LOGW(TAG, "panel: http://%s:%d/ - AUTHENTICATION DISABLED, anyone on the LAN can switch the lamp",
              ip, CONFIG_APP_WEB_PORT);

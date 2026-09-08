@@ -126,6 +126,8 @@ Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3, sieć domowa):
 | **Czas z sieci (SNTP) + wschód/zachód** | `sun: timezone set to 'CET-1CEST,M3.5.0,M10.5.0/3'`, `sun: SNTP client started (server pool.ntp.org)`, `sun: time synchronized: 2026-07-30 11:12:03`; wyliczone dla Warszawy 30.07: wschód 04:53, zachód 20:31, okno nocy 20:01–05:23, `is_night=false` o 11:12 (zgodne z rzeczywistością ±2 min) |
 | **Blokada dzienna (`night_only`)** | zweryfikowana w dzień na tym samym zboczu obecności (`dist=29`, `is_night=false`): przy `night_only=false` log `light: lamp ON (source: auto)`, przy `night_only=true` log `light: presence detected but it is daytime (night_only) - not switching on` i `on=false` |
 | **Odtwarzanie konfiguracji LD2420 po zaniku zasilania** | działa: `/api/status` pokazał `sensor.restored_writes=7` po realnym odcięciu — moduł zgubił 7 wartości, sterownik je dopisał; właściciel potwierdził, że ustawienia przestały ginąć |
+| **Zmiana hasła panelu z panelu** | działa: `POST /api/password` → nowe hasło 200, stare 401; po powrocie na poprzednie znów 200. Poświadczenia w NVS (`web_user`/`web_pass`), więc przeżywają OTA; 4 szybkie odcięcia zasilania przywracają wartości z firmware |
+| **Eksport/import ustawień (JSON)** | działa: `GET /api/settings` → 530 B z `Content-Disposition`, bez hasła i danych Wi-Fi; import ze zmienionym `hold_s` 2→5 zastosował 16 pól, powrót z kopii przywrócił `hold_s=2`, `psrc=and`, `timeout=6s`, `still[2]=70`; powtórny import bez zmian daje `sensor_writes=0` (nie zużywa pamięci modułu) |
 | **Heartbeat 1 Hz w sterowniku LD2420** | działa: zmiana `min_cm`/`max_cm` przelicza obecność w ~1 s bez zmiany odczytu z modułu (wcześniej callback leciał tylko przy zmianie ramki, więc zmiana ustawień nie miała efektu do ruchu celu) |
 | **Praca z 230 V** (test właściciela, 2026-08-28, zasilacz HLK) | działa |
 | **Awaryjny tryb serwisowy Wi-Fi (SoftAP)** | działa end-to-end (2026-08-28, test właściciela poza zasięgiem): `POST /api/wifi {"setup_mode":true}` → restart → AP `Swiatlo-D049` w skanie Windows/telefonu, panel `http://192.168.4.1/` odpowiada (GET `/` 200), `GET /api/wifi/scan` zwraca sieci posortowane po RSSI, `POST /api/wifi` zapisuje i restartuje; po resecie wraca do stacji (flaga `swiatlo/prov` czyszczona przy wejściu) |
@@ -423,6 +425,9 @@ Sekwencja startowa ustawia atrybut Matter OnOff na **rzeczywisty** stan przekaź
 | POST | `/api/sensor` | `{"gate":3,"move":250,"still":200}` | progi jednej bramki (1 bramka ≈ 0,7 m) |
 | POST | `/api/sensor` | `{"mode":"energy"\|"simple"}` | tryb wyjścia modułu |
 | POST | `/api/sensor` | `{"action":"refresh"\|"restart"\|"factory_reset"}` | operacje na module |
+| POST | `/api/password` | `{"current":…,"password":…,"user":…}` | zmiana hasła panelu (NVS, przeżywa OTA) |
+| GET/POST | `/api/settings` | kopia JSON | eksport/import ustawień i kalibracji (bez sekretów) |
+| POST | `/api/ota` | surowy `.bin` | aktualizacja firmware po Wi-Fi |
 | POST | `/api/reboot` | `{}` | restart ESP32 |
 
 Panel HTTP startuje po zdarzeniu `kInterfaceIpAddressChanged` (pierwsze IP, także IPv6 —
@@ -478,7 +483,8 @@ Kolejność wg priorytetu właściciela: **żarówka → czujnik → panel**, Ma
 4. Zmierzyć `free_heap` po sparowaniu (BLE zwolnione) — patrz uwaga o RAM w §2.
 
 ### Krok 4 — dokończenie funkcji
-- [ ] Zmienić domyślne hasło panelu (`CONFIG_APP_WEB_PASS`).
+- [x] Zmiana hasła panelu — zrobione z panelu (`POST /api/password`, NVS, reset 4 odcięciami).
+- [x] Eksport/import ustawień w JSON (`GET`/`POST /api/settings`).
 - [ ] Rozważyć mDNS dla panelu (`swiatlo.local`) — uwaga: Matter używa własnego mDNS
       (minimal mDNS), więc trzeba sprawdzić, czy `mdns_hostname_set()` nie psuje
       rozgłaszania `_matterc._udp` / `_matter._tcp`.

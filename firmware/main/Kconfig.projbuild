@@ -219,6 +219,17 @@ menu "Swiatlo LD2420 - configuration"
                 partition back to the other OTA image. Does nothing when the second slot
                 holds no valid image.
 
+        config APP_POWER_CYCLE_PWRESET_COUNT
+            int "Power cycles that reset the panel password (0 = disabled)"
+            depends on APP_POWER_CYCLE_FORCE_ON
+            default 4
+            range 0 8
+            help
+                Last-resort recovery for a forgotten panel password: this many quick power
+                cuts drop the stored credentials, so the panel goes back to the user and
+                password compiled into the firmware. Without it a forgotten password would
+                mean dismounting the fixture and reflashing over USB.
+
     endmenu
 
     menu "Wi-Fi setup fallback (SoftAP)"

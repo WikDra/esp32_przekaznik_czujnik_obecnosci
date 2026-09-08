@@ -239,6 +239,10 @@ czas podtrzymania, okno odległości (`min_cm`/`max_cm`), zakres bramek i progi
 | POST | `/api/wifi` | `{"ssid":"...","password":"..."}` | zapis sieci Wi-Fi + restart (§4.5) |
 | POST | `/api/wifi` | `{"setup_mode":true}` | restart do trybu serwisowego z własnym AP |
 | GET | `/api/wifi/scan` | – | lista widocznych sieci (tylko w trybie serwisowym) |
+| POST | `/api/password` | `{"current":"...","password":"...","user":"admin"}` | zmiana hasła panelu (§4.10) |
+| GET | `/api/settings` | – | kopia ustawień w JSON (bez sekretów) |
+| POST | `/api/settings` | zawartość kopii | odtworzenie ustawień i kalibracji |
+| POST | `/api/ota` | plik `.bin` (`application/octet-stream`) | aktualizacja firmware (§4.8) |
 | POST | `/api/reboot` | `{}` | restart ESP32 |
 
 ```bash
@@ -276,7 +280,8 @@ Matter potrzebne własne certyfikaty w partycji `fctry`.
 Dwa szybkie odcięcia zasilania (domyślnie 2 cykle w oknie 10 s) zapalają żarówkę
 z pominięciem automatyki — dopóki nie wyłączysz jej jawnie z Mattera, panelu lub
 przycisku. Stan widoczny jako `force_on` w `/api/status`. Zwykły reset płytki liczy się
-tak samo jak odcięcie prądu. Opcje: `CONFIG_APP_POWER_CYCLE_*`.
+tak samo jak odcięcie prądu. Trzy odcięcia cofają firmware (§4.8), cztery resetują hasło
+panelu (§4.10). Opcje: `CONFIG_APP_POWER_CYCLE_*`.
 
 ### 4.5 Zmiana Wi-Fi i awaryjny tryb serwisowy
 
@@ -387,7 +392,49 @@ wgraniu po USB), więc zabezpieczeniem jest wyłącznie powyższy licznik odcię
 realizowany przez aplikację. Obraz jest weryfikowany sumą kontrolną przed przełączeniem
 partycji, więc uszkodzony transfer nie zostanie uruchomiony.
 
-### 4.9 Kalibracja czujnika
+### 4.10 Hasło panelu i kopia ustawień
+
+**Zmiana hasła** — sekcja *Hasło panelu*: podajesz aktualne hasło (potwierdzenie, bo
+przeglądarka trzyma Basic Auth w pamięci), login i nowe hasło (min. 4 znaki). Nowe
+poświadczenia lądują w NVS, więc **przeżywają aktualizację firmware** i nadpisują to,
+co jest w `menuconfig`.
+
+```bash
+curl -u admin:swiatlo -H "Content-Type: application/json" \
+     -d '{"current":"swiatlo","password":"nowe-haslo","user":"admin"}' \
+     http://192.168.1.7/api/password
+```
+
+Zapomniane hasło: **cztery szybkie odcięcia zasilania** przywracają login i hasło
+wkompilowane w firmware (`CONFIG_APP_POWER_CYCLE_PWRESET_COUNT`). Bez tego jedyną drogą
+byłoby rozkręcenie oprawy i wgranie firmware po USB. Cała drabinka odcięć:
+
+| Liczba szybkich odcięć | Efekt |
+|---|---|
+| 2 | wymuszenie ON z pominięciem automatyki (§4.4) |
+| 3 | powrót do poprzedniego firmware (§4.8) |
+| 4 | reset hasła panelu do wartości z firmware |
+
+**Kopia ustawień** — sekcja *Kopia ustawień (JSON)*: przycisk pobiera plik
+`swiatlo-config-RRRR-MM-DD.json`, drugi wgrywa go z powrotem. Kopia zawiera automatykę,
+tryb nocny i kalibrację czujnika (progi `move`/`still` wszystkich 16 bramek, zakres bramek,
+timeout modułu). Świadomie **nie** zawiera hasła panelu ani danych Wi-Fi — ma odtwarzać
+kalibrację, nie klonować dostępu.
+
+```bash
+# kopia
+curl -u admin:swiatlo http://192.168.1.7/api/settings > swiatlo-config.json
+
+# odtworzenie
+curl -u admin:swiatlo -H "Content-Type: application/json" \
+     --data-binary @swiatlo-config.json http://192.168.1.7/api/settings
+```
+
+Import stosuje tylko te pola, które są w pliku, i pomija zapisy do czujnika, gdy wartości
+się nie zmieniają (pamięć nieulotna modułu ma ograniczoną liczbę cykli). W odpowiedzi
+dostajesz `app_fields` i `sensor_writes` — ile pól i ile zapisów faktycznie zastosowano.
+
+### 4.11 Kalibracja czujnika
 
 **Skąd bierze się obecność.** LD2420 wystawia w ramce flagę obecności i odległość celu.
 Na wielu egzemplarzach ta flaga siedzi na stałe na `1`, bo reaguje też na ściany i meble

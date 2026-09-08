@@ -324,6 +324,17 @@ static bool power_cycle_check(void)
 {
     uint8_t count = (uint8_t)(app_settings_get_power_cycles() + 1);
 
+#if CONFIG_APP_POWER_CYCLE_PWRESET_COUNT > 0
+    /* Zapomniane hasło panelu: bez USB nie ma innej drogi, a wyłącznik jest dostępny. */
+    if (count >= CONFIG_APP_POWER_CYCLE_PWRESET_COUNT) {
+        app_settings_set_power_cycles(0);
+        esp_err_t err = app_settings_reset_web_credentials();
+        ESP_LOGW(TAG, "%d power cycles - panel credentials reset to firmware defaults: %s", count,
+                 esp_err_to_name(err));
+        return true; /* zapal światło jako potwierdzenie */
+    }
+#endif
+
 #if CONFIG_APP_POWER_CYCLE_ROLLBACK_COUNT > 0
     /* Ratunek po nieudanej aktualizacji OTA: urządzenie siedzi w oprawie, więc jedynym
      * dostępnym "przyciskiem" jest wyłącznik zasilania. Tyle szybkich odcięć przywraca

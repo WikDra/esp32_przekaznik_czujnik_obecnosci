@@ -73,6 +73,19 @@ esp_err_t app_settings_sensor_save(void);
 /* Kasuje zapamiętaną konfigurację czujnika (po factory reset modułu). */
 esp_err_t app_settings_sensor_forget(void);
 
+/* ------------------------------------------------------------------ hasło panelu
+ *
+ * Domyślne poświadczenia pochodzą z menuconfig, ale można je zmienić z panelu -
+ * wtedy nadpisane wartości siedzą w NVS i przeżywają aktualizację firmware.
+ */
+const char *app_settings_web_user(void);
+const char *app_settings_web_pass(void);
+esp_err_t app_settings_set_web_credentials(const char *user, const char *pass);
+/* Usuwa nadpisane poświadczenia - panel wraca do wartości z menuconfig. */
+esp_err_t app_settings_reset_web_credentials(void);
+/* Rośnie przy każdej zmianie poświadczeń - serwer HTTP unieważnia po tym swój cache. */
+uint32_t app_settings_web_generation(void);
+
 /* ------------------------------------------------------------------ light */
 
 typedef enum {

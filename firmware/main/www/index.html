@@ -144,6 +144,35 @@
 </section>
 
 <section>
+  <h2>Hasło panelu</h2>
+  <div class="row muted">
+    Zmiana zapisuje się w NVS, więc przeżywa aktualizację firmware. Po zapisaniu
+    przeładuj stronę i zaloguj się nowym hasłem.
+  </div>
+  <div class="row"><label for="pw_current">Aktualne hasło</label>
+    <input type="password" id="pw_current" size="20" autocomplete="off"></div>
+  <div class="row"><label for="pw_user">Login</label>
+    <input type="text" id="pw_user" size="20" autocomplete="off"></div>
+  <div class="row"><label for="pw_new">Nowe hasło (min. 4 znaki)</label>
+    <input type="password" id="pw_new" size="20" autocomplete="off"></div>
+  <div class="row"><button class="primary" onclick="changePassword()">Zmień hasło</button></div>
+</section>
+
+<section>
+  <h2>Kopia ustawień (JSON)</h2>
+  <div class="row muted">
+    Eksport zawiera automatykę, tryb nocny i kalibrację czujnika (progi wszystkich 16
+    bramek). Świadomie <b>nie</b> zawiera hasła panelu ani danych Wi-Fi.
+  </div>
+  <div class="row">
+    <button class="primary" onclick="exportSettings()">Pobierz kopię</button>
+    <input type="file" id="cfgfile" accept=".json">
+    <button onclick="importSettings()">Wgraj kopię</button>
+  </div>
+  <div class="row muted" id="cfgstatus"></div>
+</section>
+
+<section>
   <h2>Aktualizacja firmware (OTA)</h2>
   <div class="row muted">
     Wgraj plik <code>swiatlo_ld2420.bin</code> z <code>firmware/build.esp32c3/</code>.
@@ -240,6 +269,8 @@ async function refresh() {
       w.mode === 'setup_ap' ? 'serwisowy AP' : (w.connected ? 'stacja (połączona)' : 'stacja (łączy się)');
     document.getElementById('wifi_ssid').textContent = w.ssid || '—';
     document.getElementById('wifi_ap').textContent = w.ap_ssid || '—';
+    const pwUser = document.getElementById('pw_user');
+    if (!editing && s.system.web_user && pwUser.value === '') { pwUser.value = s.system.web_user; }
 
     const tbody = document.querySelector('#gates tbody');
     if (!editing || tbody.children.length === 0) {
@@ -349,6 +380,53 @@ async function setupMode() {
     msg('Restart do trybu serwisowego — połącz się z siecią urządzenia i wejdź na 192.168.4.1');
   } catch (e) { msg('Błąd: ' + e.message, true); }
 }
+async function changePassword() {
+  const current = document.getElementById('pw_current').value;
+  const pass = document.getElementById('pw_new').value;
+  const user = document.getElementById('pw_user').value.trim();
+  if (!current || !pass) { msg('Podaj aktualne i nowe hasło', true); return; }
+  if (pass.length < 4) { msg('Nowe hasło musi mieć co najmniej 4 znaki', true); return; }
+  try {
+    const r = await api('/api/password', { current, password: pass, user });
+    document.getElementById('pw_current').value = '';
+    document.getElementById('pw_new').value = '';
+    msg(`Hasło zmienione (login: ${r.user}). Przeładuj stronę i zaloguj się od nowa.`);
+  } catch (e) { msg('Błąd zmiany hasła: ' + e.message, true); }
+}
+
+async function exportSettings() {
+  try {
+    const res = await fetch('/api/settings');
+    if (!res.ok) throw new Error(res.status);
+    const text = await res.text();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    const d = new Date().toISOString().slice(0, 10);
+    a.download = `swiatlo-config-${d}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    document.getElementById('cfgstatus').textContent = 'Kopia pobrana.';
+    msg('Kopia ustawień pobrana');
+  } catch (e) { msg('Błąd eksportu: ' + e.message, true); }
+}
+
+async function importSettings() {
+  const f = document.getElementById('cfgfile').files[0];
+  const box = document.getElementById('cfgstatus');
+  if (!f) { msg('Wybierz plik JSON', true); return; }
+  if (!confirm(`Wgrać ustawienia z ${f.name}? Nadpisze obecną konfigurację i progi czujnika.`)) return;
+  try {
+    const parsed = JSON.parse(await f.text());
+    const r = await api('/api/settings', parsed);
+    box.textContent = `Zastosowano: ${r.app_fields} pól ustawień, ${r.sensor_writes} zapis(ów) do czujnika.`;
+    editing = false;
+    msg('Ustawienia wgrane'); refresh();
+  } catch (e) {
+    box.textContent = 'Błąd: ' + e.message;
+    msg('Błąd importu: ' + e.message, true);
+  }
+}
+
 async function uploadOta() {
   const f = document.getElementById('otafile').files[0];
   const box = document.getElementById('otastatus');

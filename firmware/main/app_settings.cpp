@@ -14,6 +14,7 @@ static const char *NVS_NS = "swiatlo";
 static app_settings_t s_settings;
 
 static void sensor_cfg_load(void);
+static void web_credentials_load(void);
 
 static void load_defaults(void)
 {
@@ -120,6 +121,7 @@ esp_err_t app_settings_init(void)
              s_settings.auto_mode, s_settings.hold_s, s_settings.min_cm, s_settings.max_cm,
              s_settings.hyst_cm, s_settings.presence_src, s_settings.restore_state, s_settings.last_on);
     sensor_cfg_load();
+    web_credentials_load();
     return ESP_OK;
 }
 
@@ -191,9 +193,88 @@ esp_err_t app_settings_sensor_forget(void)
     return app_settings_sensor_save();
 }
 
-uint8_t app_settings_get_power_cycles(void)
+/* ------------------------------------------------------------ hasło panelu */
+
+static char s_web_user[24];
+static char s_web_pass[64];
+static uint32_t s_web_generation;
+
+static void web_credentials_load(void)
+{
+    strlcpy(s_web_user, CONFIG_APP_WEB_USER, sizeof(s_web_user));
+    strlcpy(s_web_pass, CONFIG_APP_WEB_PASS, sizeof(s_web_pass));
+
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+        return;
+    }
+    size_t len = sizeof(s_web_user);
+    nvs_get_str(h, "web_user", s_web_user, &len);
+    len = sizeof(s_web_pass);
+    if (nvs_get_str(h, "web_pass", s_web_pass, &len) == ESP_OK) {
+        ESP_LOGI(TAG, "panel credentials loaded from NVS (user '%s')", s_web_user);
+    }
+    nvs_close(h);
+}
+
+const char *app_settings_web_user(void) { return s_web_user; }
+const char *app_settings_web_pass(void) { return s_web_pass; }
+uint32_t app_settings_web_generation(void) { return s_web_generation; }
+
+esp_err_t app_settings_set_web_credentials(const char *user, const char *pass)
+{
+    if (!user || !pass) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (strlen(user) == 0 || strlen(user) >= sizeof(s_web_user)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    /* Panel przełącza 230 V, więc nie pozwalamy na hasło krótsze niż 4 znaki. */
+    if (strlen(pass) < 4 || strlen(pass) >= sizeof(s_web_pass)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+    nvs_set_str(h, "web_user", user);
+    nvs_set_str(h, "web_pass", pass);
+    err = nvs_commit(h);
+    nvs_close(h);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    strlcpy(s_web_user, user, sizeof(s_web_user));
+    strlcpy(s_web_pass, pass, sizeof(s_web_pass));
+    s_web_generation++;
+    ESP_LOGW(TAG, "panel credentials changed (user '%s')", s_web_user);
+    return ESP_OK;
+}
+
+esp_err_t app_settings_reset_web_credentials(void)
 {
     nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+    nvs_erase_key(h, "web_user");
+    nvs_erase_key(h, "web_pass");
+    err = nvs_commit(h);
+    nvs_close(h);
+
+    strlcpy(s_web_user, CONFIG_APP_WEB_USER, sizeof(s_web_user));
+    strlcpy(s_web_pass, CONFIG_APP_WEB_PASS, sizeof(s_web_pass));
+    s_web_generation++;
+    ESP_LOGW(TAG, "panel credentials reset to firmware defaults (user '%s')", s_web_user);
+    return err;
+}
+
+uint8_t app_settings_get_power_cycles(void)
+{    nvs_handle_t h;
     uint8_t value = 0;
     if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
         if (nvs_get_u8(h, "pc_cnt", &value) != ESP_OK) {
