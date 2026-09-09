@@ -184,6 +184,20 @@
 </section>
 
 <section>
+  <h2>Matter</h2>
+  <div class="row muted">
+    Stan: <span id="matter_state">?</span> · sparowany: <span id="matter_paired">?</span>.
+    Wyłączenie zwalnia BLE i sporo RAM-u, jeśli sterujesz tylko panelem. Dane parowania
+    zostają w pamięci, więc po ponownym włączeniu nie trzeba parować od nowa.
+  </div>
+  <div class="row">
+    <button class="primary" onclick="setMatter(true)">Włącz Matter</button>
+    <button onclick="setMatter(false)">Wyłącz Matter</button>
+    <span class="muted">przełączenie restartuje urządzenie</span>
+  </div>
+</section>
+
+<section>
   <h2>Aktualizacja firmware (OTA)</h2>
   <div class="row muted">
     Wgraj plik <code>swiatlo_ld2420.bin</code> z <code>firmware/build.esp32c3/</code>.
@@ -240,6 +254,9 @@ async function refresh() {
     document.getElementById('mode').textContent = s.sensor.mode;
     document.getElementById('ip').textContent = s.system.ip;
     document.getElementById('matter').textContent = s.system.commissioned ? 'sparowany' : 'niesparowany';
+    document.getElementById('matter_state').textContent =
+      s.system.matter_enabled ? 'włączony' : 'wyłączony (tylko panel HTTP)';
+    document.getElementById('matter_paired').textContent = s.system.commissioned ? 'tak' : 'nie';
     document.getElementById('heap').textContent = s.system.free_heap;
     document.getElementById('uptime').textContent = s.system.uptime_s;
 
@@ -426,6 +443,15 @@ async function loadEvents() {
       tbody.appendChild(tr);
     }
   } catch (e) { msg('Błąd historii: ' + e.message, true); }
+}
+
+async function setMatter(enabled) {
+  const what = enabled ? 'włączyć' : 'wyłączyć';
+  if (!confirm(`Czy ${what} Matter? Urządzenie zrestartuje się.`)) return;
+  try {
+    const r = await api('/api/matter', { enabled });
+    msg(r.info === 'no change' ? 'Matter już był w tym stanie' : `Matter ${enabled ? 'włączony' : 'wyłączony'} — restart…`);
+  } catch (e) { msg('Błąd: ' + e.message, true); }
 }
 
 async function changePassword() {

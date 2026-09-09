@@ -279,6 +279,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON *sys = cJSON_AddObjectToObject(root, "system");
     cJSON_AddStringToObject(sys, "ip", ip);
     cJSON_AddBoolToObject(sys, "commissioned", app_matter_commissioned);
+    cJSON_AddBoolToObject(sys, "matter_enabled", app_settings_matter_enabled());
     cJSON_AddNumberToObject(sys, "free_heap", esp_get_free_heap_size());
     cJSON_AddNumberToObject(sys, "uptime_s", (double)(esp_timer_get_time() / 1000000));
 
@@ -975,6 +976,48 @@ static esp_err_t events_get_handler(httpd_req_t *req)
     return send_json(req, root, 200);
 }
 
+/* --- włączanie/wyłączanie stosu Matter (wymaga restartu) --- */
+
+static esp_err_t matter_post_handler(httpd_req_t *req)
+{
+    if (!check_auth(req)) {
+        return ESP_OK;
+    }
+    cJSON *body = read_json_body(req);
+    if (!body) {
+        return send_error(req, 400, "invalid json body");
+    }
+    bool enabled = false;
+    if (!json_get_bool(body, "enabled", &enabled)) {
+        cJSON_Delete(body);
+        return send_error(req, 400, "expected {\"enabled\":true|false}");
+    }
+    cJSON_Delete(body);
+
+    if (enabled == app_settings_matter_enabled()) {
+        cJSON *root = cJSON_CreateObject();
+        cJSON_AddBoolToObject(root, "ok", true);
+        cJSON_AddBoolToObject(root, "enabled", enabled);
+        cJSON_AddStringToObject(root, "info", "no change");
+        return send_json(req, root, 200);
+    }
+
+    esp_err_t err = app_settings_set_matter_enabled(enabled);
+    if (err != ESP_OK) {
+        return send_error(req, 500, esp_err_to_name(err));
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "ok", true);
+    cJSON_AddBoolToObject(root, "enabled", enabled);
+    /* esp-matter 1.4.2 nie ma API do zatrzymania stosu w locie, więc przełącznik
+     * działa przez restart. Ustawienia i dane parowania zostają w NVS. */
+    cJSON_AddStringToObject(root, "info", "rebooting to apply");
+    send_json(req, root, 200);
+    app_wifi_schedule_reboot(1500);
+    return ESP_OK;
+}
+
 static void reboot_timer_cb(void *arg)
 {
     (void)arg;
@@ -1045,6 +1088,7 @@ esp_err_t app_web_start(void)
         {.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_get_handler, .user_ctx = NULL},
         {.uri = "/api/ota", .method = HTTP_POST, .handler = ota_post_handler, .user_ctx = NULL},
         {.uri = "/api/password", .method = HTTP_POST, .handler = password_post_handler, .user_ctx = NULL},
+        {.uri = "/api/matter", .method = HTTP_POST, .handler = matter_post_handler, .user_ctx = NULL},
         {.uri = "/api/settings", .method = HTTP_GET, .handler = settings_get_handler, .user_ctx = NULL},
         {.uri = "/api/settings", .method = HTTP_POST, .handler = settings_post_handler, .user_ctx = NULL},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_post_handler, .user_ctx = NULL},

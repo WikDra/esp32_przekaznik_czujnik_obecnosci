@@ -142,6 +142,26 @@ extern "C" void app_main()
         ESP_LOGE(TAG, "setup mode failed (%s) - continuing normally", esp_err_to_name(prov_err));
     }
 
+    /* --- Matter wyłączony w panelu: sami podnosimy stację Wi-Fi i panel --- */
+    if (!app_settings_matter_enabled()) {
+        ESP_LOGW(TAG, "Matter is disabled in settings - starting without the Matter stack");
+        esp_err_t sta_err = app_wifi_sta_start();
+        if (sta_err == ESP_OK) {
+            app_wifi_watchdog_start();
+            err = ld2420_init(app_light_on_presence);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "LD2420 init failed: %s", esp_err_to_name(err));
+            }
+            if (app_settings()->restore_state && app_settings()->last_on && !app_light_get()) {
+                app_light_set(true, LIGHT_SRC_BOOT);
+            }
+            ESP_LOGI(TAG, "ready without Matter (lamp=%s)", app_light_get() ? "on" : "off");
+            return;
+        }
+        ESP_LOGE(TAG, "Wi-Fi station start failed (%s) - falling back to Matter",
+                 esp_err_to_name(sta_err));
+    }
+
     /* --- Matter data model --- */
     /* app_light_init() may already have switched the lamp on (power-cycle override),
      * and the restore-state option is applied here, so the OnOff attribute starts

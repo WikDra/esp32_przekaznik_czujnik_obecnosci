@@ -1,4 +1,6 @@
 #include "app_wifi.h"
+#include "app_priv.h"
+#include "app_sun.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -83,6 +85,18 @@ void app_wifi_schedule_reboot(uint32_t delay_ms)
 static void watchdog_cb(void *arg)
 {
     (void)arg;
+    /* Jeśli Wi-Fi podnosiliśmy sami (Matter wyłączony w panelu), to najpierw wracamy
+     * na sprawdzoną ścieżkę z Matterem - awaria jest wtedy najprawdopodobniej w naszym
+     * kodzie stacji, a nie w danych logowania. Dopiero gdy i to nie da adresu, następny
+     * dozór wprowadzi urządzenie w tryb serwisowy z SoftAP. */
+    if (!app_settings_matter_enabled()) {
+        ESP_LOGW(TAG, "no IP address within %d s and Matter is disabled - re-enabling Matter and rebooting",
+                 CONFIG_APP_WIFI_FALLBACK_S);
+        app_settings_set_matter_enabled(true);
+        esp_restart();
+        return;
+    }
+
     ESP_LOGW(TAG, "no IP address within %d s - rebooting into Wi-Fi setup mode (SoftAP)",
              CONFIG_APP_WIFI_FALLBACK_S);
     app_wifi_set_prov_flag(true);
@@ -205,6 +219,104 @@ esp_err_t app_wifi_scan(app_wifi_ap_info_t *out, size_t max, size_t *count)
     }
     *count = n;
     return ESP_OK;
+}
+
+/* ------------------------------------------------------------ stacja bez Mattera */
+
+static esp_timer_handle_t s_reconnect_timer;
+
+static void reconnect_cb(void *arg)
+{
+    (void)arg;
+    esp_wifi_connect();
+}
+
+static void sta_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    (void)arg;
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+        return;
+    }
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        app_net_connected = false;
+        /* Ponawiamy z opóźnieniem, żeby przy wyłączonym routerze nie kręcić pętli. */
+        if (s_reconnect_timer) {
+            esp_timer_stop(s_reconnect_timer);
+            esp_timer_start_once(s_reconnect_timer, 2 * 1000 * 1000);
+        }
+        return;
+    }
+    if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+        const ip_event_got_ip_t *event = (const ip_event_got_ip_t *)data;
+        ESP_LOGI(TAG, "sta ip: " IPSTR, IP2STR(&event->ip_info.ip));
+        app_net_connected = true;
+        app_wifi_notify_got_ip();
+        app_web_start();
+        app_sun_start();
+    }
+}
+
+esp_err_t app_wifi_sta_start(void)
+{
+    esp_err_t err = esp_netif_init();
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = esp_event_loop_create_default();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        return err;
+    }
+    esp_netif_create_default_wifi_sta();
+
+    wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
+    err = esp_wifi_init(&init_cfg);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                                       sta_event_handler, NULL, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                                       sta_event_handler, NULL, NULL));
+
+    const esp_timer_create_args_t args = {
+        .callback = reconnect_cb,
+        .arg = NULL,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "wifi_retry",
+        .skip_unhandled_events = true,
+    };
+    esp_timer_create(&args, &s_reconnect_timer);
+
+    /* Dane logowania siedzą w NVS sterownika Wi-Fi (WIFI_STORAGE_FLASH), tam gdzie
+     * zapisał je Matter albo panel. Gdy ich nie ma, sięgamy po wartości z kompilacji. */
+    wifi_config_t sta;
+    memset(&sta, 0, sizeof(sta));
+    if (esp_wifi_get_config(WIFI_IF_STA, &sta) != ESP_OK || sta.sta.ssid[0] == '\0') {
+#if defined(CONFIG_DEFAULT_WIFI_SSID)
+        if (strlen(CONFIG_DEFAULT_WIFI_SSID) > 0) {
+            strlcpy((char *)sta.sta.ssid, CONFIG_DEFAULT_WIFI_SSID, sizeof(sta.sta.ssid));
+            strlcpy((char *)sta.sta.password, CONFIG_DEFAULT_WIFI_PASSWORD, sizeof(sta.sta.password));
+            esp_wifi_set_config(WIFI_IF_STA, &sta);
+            ESP_LOGI(TAG, "using Wi-Fi credentials compiled into the firmware");
+        } else
+#endif
+        {
+            ESP_LOGW(TAG, "no Wi-Fi credentials stored - the connection watchdog will start setup mode");
+        }
+    }
+
+    err = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (err == ESP_OK) {
+        err = esp_wifi_start();
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "station start failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    ESP_LOGW(TAG, "Matter disabled - running as plain Wi-Fi station with the HTTP panel only");    return ESP_OK;
 }
 
 /* ------------------------------------------------------------ tryb serwisowy */

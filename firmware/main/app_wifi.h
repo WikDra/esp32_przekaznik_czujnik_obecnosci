@@ -45,6 +45,11 @@ esp_err_t app_wifi_set_prov_flag(bool enabled);
  * Wołane zamiast esp_matter::start(). */
 esp_err_t app_wifi_prov_start(void);
 
+/* Zwykła praca stacji **bez** Mattera (gdy stos jest wyłączony w panelu).
+ * Normalnie Wi-Fi podnosi chip; tutaj robimy to sami, z automatycznym ponawianiem
+ * połączenia, i po uzyskaniu IP startujemy panel oraz SNTP. */
+esp_err_t app_wifi_sta_start(void);
+
 /* Czy pracujemy teraz w trybie serwisowym. */
 bool app_wifi_is_prov_mode(void);
 

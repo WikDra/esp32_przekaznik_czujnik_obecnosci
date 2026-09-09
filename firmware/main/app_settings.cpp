@@ -12,6 +12,7 @@ static const char *TAG = "settings";
 static const char *NVS_NS = "swiatlo";
 
 static app_settings_t s_settings;
+static bool s_matter_enabled = true;
 
 static void sensor_cfg_load(void);
 static void web_credentials_load(void);
@@ -115,6 +116,9 @@ esp_err_t app_settings_init(void)
     nvs_get_str(h, "tz", s_settings.tz, &len);
     len = sizeof(s_settings.ntp_server);
     nvs_get_str(h, "ntp", s_settings.ntp_server, &len);
+    if (nvs_get_u8(h, "matter_en", &u8) == ESP_OK) {
+        s_matter_enabled = u8 != 0;
+    }
     nvs_close(h);
 
     ESP_LOGI(TAG, "loaded: auto=%d hold=%us range=%u..%ucm hyst=%ucm psrc=%u restore=%d last_on=%d",
@@ -191,6 +195,27 @@ esp_err_t app_settings_sensor_forget(void)
 {
     memset(&s_sensor_cfg, 0, sizeof(s_sensor_cfg));
     return app_settings_sensor_save();
+}
+
+/* ------------------------------------------------------------ Matter on/off */
+
+bool app_settings_matter_enabled(void) { return s_matter_enabled; }
+
+esp_err_t app_settings_set_matter_enabled(bool enabled)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+    nvs_set_u8(h, "matter_en", enabled ? 1 : 0);
+    err = nvs_commit(h);
+    nvs_close(h);
+    if (err == ESP_OK) {
+        s_matter_enabled = enabled;
+        ESP_LOGW(TAG, "Matter %s (effective after restart)", enabled ? "enabled" : "disabled");
+    }
+    return err;
 }
 
 /* ------------------------------------------------------------ hasło panelu */

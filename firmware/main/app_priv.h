@@ -73,6 +73,16 @@ esp_err_t app_settings_sensor_save(void);
 /* Kasuje zapamiętaną konfigurację czujnika (po factory reset modułu). */
 esp_err_t app_settings_sensor_forget(void);
 
+/* ------------------------------------------------------------------ Matter
+ *
+ * Stos Mattera można wyłączyć bez rekompilacji (zwalnia BLE i sporo RAM-u).
+ * esp-matter 1.4.2 nie ma API do zatrzymania stosu w locie, więc przełącznik
+ * działa przez flagę w NVS i restart - przy wyłączonym Matterze Wi-Fi podnosi
+ * app_wifi_sta_start().
+ */
+bool app_settings_matter_enabled(void);
+esp_err_t app_settings_set_matter_enabled(bool enabled);
+
 /* ------------------------------------------------------------------ hasło panelu
  *
  * Domyślne poświadczenia pochodzą z menuconfig, ale można je zmienić z panelu -

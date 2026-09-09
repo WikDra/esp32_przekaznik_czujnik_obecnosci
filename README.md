@@ -241,6 +241,7 @@ czas podtrzymania, okno odległości (`min_cm`/`max_cm`), zakres bramek i progi
 | POST | `/api/wifi` | `{"setup_mode":true}` | restart do trybu serwisowego z własnym AP |
 | GET | `/api/wifi/scan` | – | lista widocznych sieci (tylko w trybie serwisowym) |
 | POST | `/api/password` | `{"current":"...","password":"...","user":"admin"}` | zmiana hasła panelu (§4.10) |
+| POST | `/api/matter` | `{"enabled":false}` | włączenie/wyłączenie stosu Matter (§4.9, restart) |
 | GET | `/api/settings` | – | kopia ustawień w JSON (bez sekretów) |
 | POST | `/api/settings` | zawartość kopii | odtworzenie ustawień i kalibracji |
 | POST | `/api/ota` | plik `.bin` (`application/octet-stream`) | aktualizacja firmware (§4.8) |
@@ -369,7 +370,29 @@ Uwagi:
 - Tryb nocny blokuje tylko **zapalanie** przez automatykę. Jeśli świt zastanie
   zapaloną żarówkę, zgaśnie normalnie po utracie obecności i `hold_s`.
 
-### 4.8 Aktualizacja firmware przez panel (OTA)
+### 4.9 Włączanie i wyłączanie Mattera
+
+Jeśli sterujesz tylko panelem, stos Matter można wyłączyć bez rekompilacji — sekcja
+*Matter* w panelu albo:
+
+```bash
+curl -u admin:swiatlo -H "Content-Type: application/json" \
+     -d '{"enabled":false}' http://192.168.1.7/api/matter
+```
+
+Flaga trafia do NVS, a urządzenie restartuje się, bo esp-matter 1.4.2 **nie ma** API do
+zatrzymania stosu w locie (jest tylko `start()` i `factory_reset()`). Przy wyłączonym
+Matterze Wi-Fi podnosi już nasz własny kod stacji (z ponawianiem połączenia), panel
+i czas z SNTP działają normalnie, a BLE wcale nie startuje — to zwalnia kilkadziesiąt
+kilobajtów RAM.
+
+Dane parowania Matter zostają w NVS, więc po ponownym włączeniu nie trzeba parować od nowa.
+
+**Zabezpieczenie:** gdy przy wyłączonym Matterze urządzenie nie dostanie adresu IP w ciągu
+minuty, samo włącza Matter z powrotem i restartuje się na sprawdzoną ścieżkę. Jeśli i tam
+nie będzie adresu, dozór wprowadzi je w tryb serwisowy z SoftAP (§4.5).
+
+### 4.10 Aktualizacja firmware przez panel (OTA)
 
 Sterownik zamknięty w oprawie nie ma dostępu do USB, więc panel przyjmuje nowy firmware
 po Wi-Fi. W sekcji *Aktualizacja firmware* wybierz plik
