@@ -73,13 +73,14 @@ mu ginąć. Wcześniejsze testy przez USB/OTA/reset ESP nie wywoływały utraty,
 **nie** odcina zasilania modułowi (LD2420 wisi na tej samej szynie 3,3 V, a linia RTS
 resetuje tylko ESP) — dlatego do reprodukcji potrzebne było realne odcięcie zasilania.
 
-### Konfiguracja pracująca w żyrandolu (wybór właściciela, 2026-09-08)
+### Konfiguracja pracująca w żyrandolu (wybór właściciela, 2026-09-09)
 
 ```
 psrc=and              flaga modułu ORAZ okno odległości
 timeout modułu = 6 s  krótki zatrzask po stronie LD2420
-hold_s = 2 s          blank_ms = 500    on_delay_ms = 100
-okno 50..280 cm       hyst_cm = 20      night_only = true   restore_state = true
+hold_s = 2 s          blank_ms = 1150   on_delay_ms = 100
+okno 50..300 cm       hyst_cm = 20      night_only = true   restore_state = true
+matter_enabled = false (sterowanie tylko panelem HTTP)
 gates 0..12
 move : 60000,25000,3000,2000,500,400,400,300,300,300,300,250,250,200,200,200
 still: 30000,7000,70,80,90,100,200,150,150,100,100,100,100,100,100,100
@@ -88,9 +89,33 @@ still: 30000,7000,70,80,90,100,200,150,150,100,100,100,100,100,100,100
 Dlaczego to działa: tryb `and` sprawia, że gdy moduł „zacina się” na odległości (znany
 problem tego egzemplarza), opadnięcie flagi obecności po jego własnym `timeout` i tak
 zdejmuje obecność, więc światło gaśnie. Niskie progi `still` na bramkach 2–5 dają
-wykrywanie bezruchu (właściciel: „gasło, jak siadłem”), a krótkie `blank_ms`/`on_delay_ms`
-zachowują szybką reakcję przy wejściu. To alternatywa dla rozważanego wcześniej
-podtrzymania zależnego od strefy — nie wymaga wiedzy o położeniu drzwi.
+wykrywanie bezruchu (właściciel: „gasło, jak siadłem”), a krótkie `on_delay_ms`
+zachowuje szybką reakcję przy wejściu.
+
+### Artefakt po przełączeniu przekaźnika — diagnoza z historii zdarzeń (2026-09-08)
+
+Historia z `/api/events` pokazała samonapędzającą się pętlę o okresie 9–10 s przy
+`blank_ms=500`:
+
+```
+20:10:48  presence_end  dist=0   dur=7     ← moduł zgubił cel (jego timeout 6 s)
+20:10:50  light_off     src=auto           ← hold_s=2
+20:10:50  presence      dist=289           ← ta sama sekunda co przełączenie
+20:10:51  light_on      src=auto
+```
+
+Dwie rzeczy rozstrzygnęły diagnozę: fałszywe wykrycie padało w **tej samej sekundzie**
+co przełączenie przekaźnika (osiem powtórzeń z rzędu), a odległość była zawsze
+identyczna (289 cm, raz 291) — czyli statyczny odbłysk, nie człowiek. Między pętlami
+było 16 minut ciszy, więc artefakt nie odpala sam z siebie: potrzebuje zmiany stanu
+oprawy. Okres pętli to `timeout` modułu (6 s) + `hold_s` (2 s) + opóźnienia.
+
+`blank_ms` jest **progiem, nie fazą** — w kodzie to jedno porównanie `now < blank_until`,
+więc większe okno odrzuca zawsze co najmniej tyle samo, nigdy mniej. Statystyka z pomiarów:
+przy 500 ms artefakt przechodził w 8/8 cykli, przy 1150 ms w 1/4 (opóźnienie artefaktu
+sięga ~1,2 s, więc 1150 ms daje tylko ~150 ms zapasu). Właściciel świadomie został na
+1150 ms, akceptując sporadyczne mignięcie; 1500 ms zamknęłoby to z marginesem kosztem
+350 ms dłuższego odroczenia zapalenia po wejściu zaraz po zgaśnięciu.
 
 Weryfikacja po wgraniu (2026-09-08, sieć `192.168.1.7`):
 
@@ -129,6 +154,7 @@ Zrobione i **zweryfikowane na sprzęcie** (ESP32-C3, sieć domowa):
 | **Zmiana hasła panelu z panelu** | działa: `POST /api/password` → nowe hasło 200, stare 401; po powrocie na poprzednie znów 200. Poświadczenia w NVS (`web_user`/`web_pass`), więc przeżywają OTA; 4 szybkie odcięcia zasilania przywracają wartości z firmware |
 | **Eksport/import ustawień (JSON)** | działa: `GET /api/settings` → 530 B z `Content-Disposition`, bez hasła i danych Wi-Fi; import ze zmienionym `hold_s` 2→5 zastosował 16 pól, powrót z kopii przywrócił `hold_s=2`, `psrc=and`, `timeout=6s`, `still[2]=70`; powtórny import bez zmian daje `sensor_writes=0` (nie zużywa pamięci modułu) |
 | **Historia wykryć (`/api/events`)** | działa: pełny cykl zapisany w kolejności od najnowszego — `light_on src=web`, `presence dist=254`, `light_off src=web`, `presence_end dist=0 duration_s=6`; czas zegarowy w każdym wpisie |
+| **Wyłączenie Mattera z panelu** | działa (test właściciela, 2026-09-09): `POST /api/matter {"enabled":false}` → restart → `matter_enabled=false`, `wifi.mode=station connected=true`, panel i SNTP działają na własnym kodzie stacji. **Heap: 19 780 → 102 196 B** (+82 kB po zwolnieniu BLE i stosu CHIP) |
 | **Heartbeat 1 Hz w sterowniku LD2420** | działa: zmiana `min_cm`/`max_cm` przelicza obecność w ~1 s bez zmiany odczytu z modułu (wcześniej callback leciał tylko przy zmianie ramki, więc zmiana ustawień nie miała efektu do ruchu celu) |
 | **Praca z 230 V** (test właściciela, 2026-08-28, zasilacz HLK) | działa |
 | **Awaryjny tryb serwisowy Wi-Fi (SoftAP)** | działa end-to-end (2026-08-28, test właściciela poza zasięgiem): `POST /api/wifi {"setup_mode":true}` → restart → AP `Swiatlo-D049` w skanie Windows/telefonu, panel `http://192.168.4.1/` odpowiada (GET `/` 200), `GET /api/wifi/scan` zwraca sieci posortowane po RSSI, `POST /api/wifi` zapisuje i restartuje; po resecie wraca do stacji (flaga `swiatlo/prov` czyszczona przy wejściu) |
