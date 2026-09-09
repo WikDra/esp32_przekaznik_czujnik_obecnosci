@@ -5,6 +5,9 @@
  * czujnikowi się „przywidziało”. Bufor jest cykliczny i trzymany w RAM - restart
  * urządzenia czyści historię (zapis każdego zdarzenia do NVS zużywałby pamięć
  * nieulotną bez sensownego powodu).
+ *
+ * Bufor alokowany jest raz, z heapu: przy ciasnej pamięci (np. z włączonym Matterem)
+ * rozmiar jest automatycznie zmniejszany, zamiast wywalać cały start.
  */
 #pragma once
 
@@ -24,27 +27,33 @@ typedef enum {
     APP_EVENT_LIGHT_OFF = 3,
 } app_event_type_t;
 
+/* 24 bajty na wpis: źródło trzymamy jako liczbę (light_src_t), nie łańcuch. */
 typedef struct {
-    uint8_t type;         /* app_event_type_t                              */
-    uint16_t distance_cm; /* odległość celu przy zdarzeniu obecności        */
-    uint32_t uptime_s;    /* czas od startu urządzenia                     */
     time_t wall;          /* czas zegarowy albo 0, gdy brak synchronizacji  */
+    uint32_t uptime_s;    /* czas od startu urządzenia                     */
+    uint16_t distance_cm; /* odległość celu przy zdarzeniu obecności        */
     uint16_t duration_s;  /* dla PRESENCE_END: jak długo trwała obecność    */
-    char src[12];         /* źródło zmiany stanu lampy                     */
+    uint8_t type;         /* app_event_type_t                              */
+    uint8_t src;          /* light_src_t - tylko dla zdarzeń lampy          */
 } app_event_t;
 
 void app_events_init(void);
 
-/* Dopisuje zdarzenie obecności (src może być NULL). */
+/* Ile wpisów faktycznie udało się zaalokować. */
+size_t app_events_capacity(void);
+
+/* Dopisuje zdarzenie obecności. */
 void app_events_add_presence(bool present, uint16_t distance_cm, uint16_t duration_s);
 
-/* Dopisuje zdarzenie zmiany stanu lampy. */
-void app_events_add_light(bool on, const char *src);
+/* Dopisuje zdarzenie zmiany stanu lampy (src to light_src_t). */
+void app_events_add_light(bool on, uint8_t src);
 
-/* Kopiuje historię od najnowszego zdarzenia. Zwraca liczbę skopiowanych wpisów. */
-size_t app_events_get(app_event_t *out, size_t max);
+/* Kopiuje `max` wpisów od najnowszego, pomijając pierwsze `skip`.
+ * Zwraca liczbę skopiowanych wpisów - pozwala wysyłać historię porcjami. */
+size_t app_events_get(app_event_t *out, size_t max, size_t skip);
 
-/* Ile zdarzeń obecności zarejestrowano od startu urządzenia. */
+/* Ile wpisów jest w buforze i ile zdarzeń obecności od startu urządzenia. */
+size_t app_events_count(void);
 uint32_t app_events_presence_count(void);
 
 const char *app_event_type_name(uint8_t type);

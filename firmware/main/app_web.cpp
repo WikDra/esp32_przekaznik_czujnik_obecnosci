@@ -934,46 +934,98 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
     return send_json(req, root, 200);
 }
 
-/* --- historia ostatnich wykryć --- */
-
+/* --- historia ostatnich wykryć ---
+ *
+ * Odpowiedź jest strumieniowana porcjami: przy kilkuset wpisach zbudowanie całego
+ * drzewa cJSON zajęłoby dziesiątki kilobajtów, a przy włączonym Matterze tyle nie ma.
+ * Parametry: ?limit=N (domyślnie całość), ?offset=N (pomiń N najnowszych).
+ */
 static esp_err_t events_get_handler(httpd_req_t *req)
 {
     if (!check_auth(req)) {
         return ESP_OK;
     }
-    static app_event_t events[CONFIG_APP_EVENT_LOG_SIZE];
-    const size_t n = app_events_get(events, CONFIG_APP_EVENT_LOG_SIZE);
 
-    cJSON *root = cJSON_CreateObject();
-    cJSON_AddBoolToObject(root, "ok", true);
-    cJSON_AddNumberToObject(root, "presence_events", app_events_presence_count());
-    cJSON_AddNumberToObject(root, "uptime_s", (double)(esp_timer_get_time() / 1000000));
-    cJSON *arr = cJSON_AddArrayToObject(root, "events");
-    for (size_t i = 0; i < n; i++) {
-        cJSON *item = cJSON_CreateObject();
-        cJSON_AddStringToObject(item, "type", app_event_type_name(events[i].type));
-        cJSON_AddNumberToObject(item, "uptime_s", events[i].uptime_s);
-        /* Czas zegarowy tylko wtedy, gdy zegar był zsynchronizowany przy zapisie. */
-        if (events[i].wall > 0) {
-            cJSON_AddNumberToObject(item, "t", (double)events[i].wall);
-            char buf[24];
-            struct tm tm_local;
-            localtime_r(&events[i].wall, &tm_local);
-            strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm_local);
-            cJSON_AddStringToObject(item, "local", buf);
+    size_t limit = app_events_capacity();
+    size_t offset = 0;
+    char query[64];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        char value[16];
+        if (httpd_query_key_value(query, "limit", value, sizeof(value)) == ESP_OK) {
+            const int v = atoi(value);
+            if (v > 0) {
+                limit = (size_t)v;
+            }
         }
-        if (events[i].type == APP_EVENT_PRESENCE_START || events[i].type == APP_EVENT_PRESENCE_END) {
-            cJSON_AddNumberToObject(item, "distance_cm", events[i].distance_cm);
+        if (httpd_query_key_value(query, "offset", value, sizeof(value)) == ESP_OK) {
+            const int v = atoi(value);
+            if (v > 0) {
+                offset = (size_t)v;
+            }
         }
-        if (events[i].type == APP_EVENT_PRESENCE_END) {
-            cJSON_AddNumberToObject(item, "duration_s", events[i].duration_s);
-        }
-        if (events[i].src[0]) {
-            cJSON_AddStringToObject(item, "src", events[i].src);
-        }
-        cJSON_AddItemToArray(arr, item);
     }
-    return send_json(req, root, 200);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+
+    char head[160];
+    int n = snprintf(head, sizeof(head),
+                     "{\"ok\":true,\"presence_events\":%lu,\"stored\":%u,\"capacity\":%u,"
+                     "\"uptime_s\":%lu,\"events\":[",
+                     (unsigned long)app_events_presence_count(), (unsigned)app_events_count(),
+                     (unsigned)app_events_capacity(),
+                     (unsigned long)(esp_timer_get_time() / 1000000));
+    httpd_resp_send_chunk(req, head, n);
+
+    /* Porcjami po 16 wpisów - stały, mały ślad w pamięci niezależnie od rozmiaru historii. */
+    app_event_t batch[16];
+    size_t sent = 0;
+    bool first = true;
+    while (sent < limit) {
+        const size_t want = (limit - sent < 16) ? (limit - sent) : 16;
+        const size_t got = app_events_get(batch, want, offset + sent);
+        if (got == 0) {
+            break;
+        }
+        for (size_t i = 0; i < got; i++) {
+            char item[224];
+            int len = snprintf(item, sizeof(item), "%s{\"type\":\"%s\",\"uptime_s\":%lu",
+                               first ? "" : ",", app_event_type_name(batch[i].type),
+                               (unsigned long)batch[i].uptime_s);
+            first = false;
+            if (batch[i].wall > 0) {
+                char buf[24];
+                struct tm tm_local;
+                localtime_r(&batch[i].wall, &tm_local);
+                strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm_local);
+                len += snprintf(item + len, sizeof(item) - len, ",\"t\":%lld,\"local\":\"%s\"",
+                                (long long)batch[i].wall, buf);
+            }
+            if (batch[i].type == APP_EVENT_PRESENCE_START ||
+                batch[i].type == APP_EVENT_PRESENCE_END) {
+                len += snprintf(item + len, sizeof(item) - len, ",\"distance_cm\":%u",
+                                batch[i].distance_cm);
+            }
+            if (batch[i].type == APP_EVENT_PRESENCE_END) {
+                len += snprintf(item + len, sizeof(item) - len, ",\"duration_s\":%u",
+                                batch[i].duration_s);
+            }
+            if (batch[i].type == APP_EVENT_LIGHT_ON || batch[i].type == APP_EVENT_LIGHT_OFF) {
+                len += snprintf(item + len, sizeof(item) - len, ",\"src\":\"%s\"",
+                                app_light_src_name((light_src_t)batch[i].src));
+            }
+            len += snprintf(item + len, sizeof(item) - len, "}");
+            httpd_resp_send_chunk(req, item, len);
+        }
+        sent += got;
+        if (got < want) {
+            break;
+        }
+    }
+
+    httpd_resp_send_chunk(req, "]}", 2);
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
 }
 
 /* --- włączanie/wyłączanie stosu Matter (wymaga restartu) --- */

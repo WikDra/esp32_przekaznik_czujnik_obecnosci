@@ -116,6 +116,8 @@ esp_err_t app_light_init(void);
 void app_light_set(bool on, light_src_t src);
 bool app_light_get(void);
 const char *app_light_last_src(void);
+/* Nazwa źródła zmiany stanu (dla historii zdarzeń i API). */
+const char *app_light_src_name(light_src_t src);
 
 /* Seconds left before the presence automation switches the lamp off (0 = idle). */
 uint32_t app_light_auto_off_in(void);

@@ -471,19 +471,26 @@ Rejestrowane są:
 
 ```bash
 curl -u admin:swiatlo http://192.168.1.7/api/events
+curl -u admin:swiatlo "http://192.168.1.7/api/events?limit=20&offset=40"   # strona po stronie
 ```
 
 ```json
-{"ok":true,"presence_events":1,"uptime_s":300,"events":[
+{"ok":true,"presence_events":11,"stored":11,"capacity":200,"uptime_s":300,"events":[
   {"type":"presence_end","local":"2026-09-08 19:18:52","distance_cm":0,"duration_s":6},
   {"type":"presence","local":"2026-09-08 19:18:46","distance_cm":254}]}
 ```
 
-Bufor ma domyślnie 30 wpisów (`CONFIG_APP_EVENT_LOG_SIZE`, najnowsze pierwsze) i siedzi
-w RAM — restart urządzenia czyści historię. Zapisywanie każdego zdarzenia do NVS zużywałoby
-pamięć nieulotną bez wyraźnego zysku, a przy zaniku zasilania i tak byłoby niepełne.
-Wpisy sprzed synchronizacji zegara nie mają czasu zegarowego, tylko `uptime_s` — panel
-pokazuje je wtedy jako „N s temu”.
+Bufor ma domyślnie **200 wpisów** (`CONFIG_APP_EVENT_LOG_SIZE`, najnowsze pierwsze) i kosztuje
+24 B na wpis (~4,7 kB), alokowane raz przy starcie. Gdyby pamięci brakowało — na przykład
+z włączonym Matterem, gdzie wolne jest ~20 kB — rozmiar jest automatycznie połowiony, więc
+duża wartość nigdy nie blokuje startu. Odpowiedź jest wysyłana porcjami, dzięki czemu nawet
+kilkaset wpisów nie buduje wielkiego JSON-a w pamięci.
+
+Panel pokazuje 60 najnowszych wpisów; pełną historię i stronicowanie daje API
+(`?limit=`, `?offset=`). Historia siedzi w RAM — restart urządzenia ją czyści. Zapisywanie
+każdego zdarzenia do NVS zużywałoby pamięć nieulotną bez wyraźnego zysku, a przy zaniku
+zasilania i tak byłoby niepełne. Wpisy sprzed synchronizacji zegara nie mają czasu
+zegarowego, tylko `uptime_s` — panel pokazuje je wtedy jako „N s temu”.
 
 ### 4.13 Kalibracja czujnika
 

@@ -124,13 +124,18 @@ menu "Swiatlo LD2420 - configuration"
 
         config APP_EVENT_LOG_SIZE
             int "How many recent events to keep in the history"
-            default 30
-            range 5 100
+            default 200
+            range 5 1000
             help
                 Ring buffer with presence detections and lamp state changes, readable from
                 the panel (GET /api/events) - handy for checking in the morning whether
-                somebody actually walked in during the night. Kept in RAM, so a restart
-                clears it.
+                somebody actually walked in during the night.
+
+                Costs 24 bytes of heap per entry (200 entries = ~4.7 kB), allocated once at
+                boot. When the allocation fails - for example with Matter enabled, where
+                only ~20 kB of heap is free - the size is halved until it fits, so a large
+                value here never prevents the device from starting. Kept in RAM, so a
+                restart clears the history.
 
         config APP_PRESENCE_SRC_DEFAULT
             int "Default presence source (0 = flag AND distance, 1 = distance only, 2 = flag only)"

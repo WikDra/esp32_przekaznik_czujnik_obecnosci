@@ -147,7 +147,8 @@
   <h2>Historia wykryć</h2>
   <div class="row muted">
     Ostatnie zdarzenia obecności i przełączenia lampy. Licznik od startu:
-    <span id="ev_count">?</span>. Historia jest w RAM, więc restart ją czyści.
+    <span id="ev_count">?</span>. Panel pokazuje 60 najnowszych; pełną historię daje
+    <code>/api/events</code>. Historia jest w RAM, więc restart ją czyści.
     <button onclick="loadEvents()">Odśwież</button>
   </div>
   <table id="events"><thead><tr><th>Kiedy</th><th>Zdarzenie</th><th>Odległość</th><th>Szczegóły</th></tr></thead>
@@ -423,8 +424,9 @@ function eventWhen(e, nowUptime) {
 
 async function loadEvents() {
   try {
-    const r = await api('/api/events');
-    document.getElementById('ev_count').textContent = r.presence_events;
+    const r = await api('/api/events?limit=60');
+    document.getElementById('ev_count').textContent =
+      `${r.presence_events} (w buforze ${r.stored}/${r.capacity})`;
     const tbody = document.querySelector('#events tbody');
     tbody.innerHTML = '';
     if (!r.events.length) {

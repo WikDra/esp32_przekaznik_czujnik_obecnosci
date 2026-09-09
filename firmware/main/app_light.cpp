@@ -48,7 +48,7 @@ static bool s_day_block_logged;  /* żeby nie zaśmiecać logu w dzień */
 static int64_t s_accepted_since_us; /* od kiedy obecność jest uznana */
 static int64_t s_blank_until_us;    /* do kiedy automatyka nie zapala (po zmianie przekaźnika) */
 
-static const char *src_name(light_src_t src)
+const char *app_light_src_name(light_src_t src)
 {
     switch (src) {
     case LIGHT_SRC_MATTER: return "matter";
@@ -59,6 +59,8 @@ static const char *src_name(light_src_t src)
     default: return "boot";
     }
 }
+
+static const char *src_name(light_src_t src) { return app_light_src_name(src); }
 
 static inline void relay_write(bool on)
 {
@@ -147,7 +149,7 @@ void app_light_set(bool on, light_src_t src)
     }
 
     ESP_LOGI(TAG, "lamp %s (source: %s)", on ? "ON" : "OFF", src_name(src));
-    app_events_add_light(on, src_name(src));
+    app_events_add_light(on, (uint8_t)src);
 
     if (src != LIGHT_SRC_MATTER) {
         matter_report_on_off(on);
